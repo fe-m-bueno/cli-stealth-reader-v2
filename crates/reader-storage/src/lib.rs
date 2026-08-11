@@ -85,15 +85,17 @@ CREATE TABLE IF NOT EXISTS books (
   last_opened_at INTEGER NOT NULL,
   render_mode TEXT NOT NULL
 );
+-- The primary key is per book, unlike v1's global one; see MIGRATE_CHAPTERS_KEY.
 CREATE TABLE IF NOT EXISTS chapters (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   book_id TEXT NOT NULL,
   chapter_index INTEGER NOT NULL,
   title TEXT NOT NULL,
   href TEXT NOT NULL,
   depth INTEGER NOT NULL,
   word_count INTEGER NOT NULL,
-  blocks_json TEXT NOT NULL
+  blocks_json TEXT NOT NULL,
+  PRIMARY KEY (book_id, id)
 );
 CREATE TABLE IF NOT EXISTS diagnostics (
   book_id TEXT NOT NULL,
@@ -148,6 +150,40 @@ CREATE TABLE IF NOT EXISTS reading_pace (
 );
 CREATE INDEX IF NOT EXISTS idx_book_tags_tag ON book_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_notes_book_id ON notes(book_id);
+";
+
+/// Indexes v1 lacked. They change no data and no query results, only how fast
+/// the reader answers them: chapter loads and bookmark lists were full scans.
+const INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, chapter_index);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_book ON bookmarks(book_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_diagnostics_book ON diagnostics(book_id);
+CREATE INDEX IF NOT EXISTS idx_books_last_opened ON books(last_opened_at DESC);
+";
+
+/// Rebuild `chapters` with a per-book primary key.
+///
+/// v1 made `chapters.id` a global primary key while deriving it from the
+/// chapter's href and index alone, so two books that share an href — a common
+/// shape, since `text/ch1.xhtml` is not unusual — could not both be stored: the
+/// second import failed on a constraint violation. The id stays as it was, so
+/// nothing that reads a chapter changes; only its uniqueness scope does.
+const MIGRATE_CHAPTERS_KEY: &str = "
+CREATE TABLE chapters_migrated (
+  id TEXT NOT NULL,
+  book_id TEXT NOT NULL,
+  chapter_index INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  href TEXT NOT NULL,
+  depth INTEGER NOT NULL,
+  word_count INTEGER NOT NULL,
+  blocks_json TEXT NOT NULL,
+  PRIMARY KEY (book_id, id)
+);
+INSERT INTO chapters_migrated (id, book_id, chapter_index, title, href, depth, word_count, blocks_json)
+  SELECT id, book_id, chapter_index, title, href, depth, word_count, blocks_json FROM chapters;
+DROP TABLE chapters;
+ALTER TABLE chapters_migrated RENAME TO chapters;
 ";
 
 /// Replace a Toggl API key in a command line with a placeholder.
@@ -229,7 +265,10 @@ impl Storage {
         &self.connection
     }
 
-    /// Add columns that older databases lack.
+    /// Bring an older database up to the current schema.
+    ///
+    /// Every step is idempotent and preserves existing rows, so a v1 database
+    /// can be opened by either implementation afterwards.
     fn migrate(&mut self) -> Result<()> {
         let has_parser_version = self
             .connection
@@ -242,7 +281,32 @@ impl Storage {
                 "ALTER TABLE books ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 1",
             )?;
         }
+
+        if self.chapters_key_is_global()? {
+            // One transaction, so a failure leaves the old table in place.
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(MIGRATE_CHAPTERS_KEY)?;
+            transaction.commit()?;
+        }
+
+        self.connection.execute_batch(INDEXES)?;
         Ok(())
+    }
+
+    /// Whether `chapters` still uses v1's single-column primary key.
+    fn chapters_key_is_global(&self) -> Result<bool> {
+        let key_columns: Vec<String> = self
+            .connection
+            .prepare("PRAGMA table_info(chapters)")?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+            })?
+            .collect::<rusqlite::Result<Vec<(String, i64)>>>()?
+            .into_iter()
+            .filter(|(_, key_position)| *key_position > 0)
+            .map(|(name, _)| name)
+            .collect();
+        Ok(key_columns == ["id"])
     }
 
     /// Rewrite Toggl keys stored by earlier builds.
@@ -1117,6 +1181,43 @@ mod tests {
         assert_eq!(loaded.chapters[1].depth, 1);
         assert_eq!(loaded.diagnostics, original.diagnostics);
         assert!(storage.book("missing").expect("load").is_none());
+    }
+
+    #[test]
+    fn two_books_can_share_chapter_ids() {
+        // v1 keyed `chapters` globally while deriving the id from the href and
+        // index alone, so importing a second book whose chapters happen to share
+        // an href failed on a constraint violation. Both must now store.
+        let mut storage = storage();
+        let first = book("b1", "hash-1");
+        let mut second = book("b2", "hash-2");
+        second.chapters = first.chapters.clone();
+
+        storage
+            .save_book(&first, RenderMode::Code, 1_000)
+            .expect("the first book saves");
+        storage
+            .save_book(&second, RenderMode::Code, 2_000)
+            .expect("a book sharing chapter ids must also save");
+
+        assert_eq!(
+            storage
+                .book("b1")
+                .expect("load")
+                .expect("book")
+                .chapters
+                .len(),
+            2
+        );
+        assert_eq!(
+            storage
+                .book("b2")
+                .expect("load")
+                .expect("book")
+                .chapters
+                .len(),
+            2
+        );
     }
 
     #[test]

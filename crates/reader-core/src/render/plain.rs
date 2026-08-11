@@ -322,12 +322,55 @@ pub fn render_plain(
             vec![StyledLine::single(label, Style::fg(palette.subtle))]
         }
         CanonicalBlock::ListItem { text, .. } => {
-            render_body(&format!("  · {text}"), width, palette, plain_highlight)
+            render_list_item(text, width, palette, plain_highlight)
         }
         CanonicalBlock::Paragraph { text, .. } | CanonicalBlock::Anchor { text, .. } => {
             render_body(text, width, palette, plain_highlight)
         }
     }
+}
+
+/// Bullet and indent of a list item.
+const LIST_MARKER: &str = "  · ";
+/// Continuation lines align under the item's text, not under the bullet.
+const LIST_CONTINUATION: &str = "    ";
+
+/// Render a list item with a hanging indent.
+///
+/// This is a deliberate improvement over v1, which folded the marker into the
+/// text and then lost it: wrapping splits on whitespace, so the leading indent
+/// never survived and a wrapped item ran back to column zero. Keeping the marker
+/// out of the wrapped text fixes both — the indent stays, and continuation lines
+/// line up under the first word instead of under the bullet.
+fn render_list_item(
+    text: &str,
+    width: usize,
+    palette: &Palette,
+    plain_highlight: bool,
+) -> Vec<StyledLine> {
+    let marker_width = LIST_MARKER.chars().count();
+    let text_width = width.saturating_sub(marker_width).max(1);
+    let body = render_body(text, text_width, palette, plain_highlight);
+    let indent_style = Style::fg(palette.subtle);
+
+    body.into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let mut result = StyledLine::empty();
+            result.push(Span::new(
+                if index == 0 {
+                    LIST_MARKER
+                } else {
+                    LIST_CONTINUATION
+                },
+                indent_style,
+            ));
+            for span in line.spans {
+                result.push(span);
+            }
+            result
+        })
+        .collect()
 }
 
 fn render_body(
@@ -446,8 +489,6 @@ mod tests {
         );
         assert_eq!(quote[0].text(), "❝ remember this");
 
-        // The bullet indent is collapsed by wrapping, as in v1: leading
-        // whitespace never survives the word split.
         let list = render_plain(
             &CanonicalBlock::ListItem {
                 id: "l".into(),
@@ -457,7 +498,7 @@ mod tests {
             &palette(),
             true,
         );
-        assert_eq!(list[0].text(), "· first");
+        assert_eq!(list[0].text(), "  · first");
 
         let break_line = render_plain(
             &CanonicalBlock::SceneBreak {
@@ -493,6 +534,53 @@ mod tests {
             true,
         );
         assert_eq!(bare_image[0].text(), "[image]");
+    }
+
+    #[test]
+    fn a_wrapped_list_item_keeps_its_indent_and_hangs_under_the_text() {
+        let block = CanonicalBlock::ListItem {
+            id: "l".into(),
+            text: "the quiet harbour at dawn and the long tide after it".into(),
+        };
+        let lines = render_plain(&block, 24, &palette(), true);
+
+        assert!(lines.len() > 1, "the fixture should wrap");
+        assert!(lines[0].text().starts_with("  · "));
+        for line in &lines[1..] {
+            assert!(
+                line.text().starts_with("    ") && !line.text().starts_with("  · "),
+                "continuation should align under the text: {:?}",
+                line.text()
+            );
+        }
+        for line in &lines {
+            assert!(line.width() <= 24, "{:?} is too wide", line.text());
+        }
+        let rejoined: String = lines
+            .iter()
+            .map(|line| line.text().trim_start().trim_start_matches("· ").to_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(rejoined, block.text());
+    }
+
+    #[test]
+    fn a_list_item_wraps_the_same_way_with_highlighting_off() {
+        let block = CanonicalBlock::ListItem {
+            id: "l".into(),
+            text: "the quiet harbour at dawn and the long tide after it".into(),
+        };
+        let highlighted = render_plain(&block, 24, &palette(), true);
+        let flat = render_plain(&block, 24, &palette(), false);
+        assert_eq!(
+            highlighted
+                .iter()
+                .map(crate::style::StyledLine::text)
+                .collect::<Vec<_>>(),
+            flat.iter()
+                .map(crate::style::StyledLine::text)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

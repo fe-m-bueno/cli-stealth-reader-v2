@@ -348,6 +348,52 @@ fn opening_a_v1_database_redacts_tokens_written_before_the_migration() {
 }
 
 #[test]
+fn opening_a_v1_database_migrates_the_chapter_key_without_losing_rows() {
+    let (mut storage, scratch) = open_fixture("chapter-key");
+
+    // The chapters that were already there survived the table rebuild.
+    let book = storage
+        .book("fixture-book")
+        .expect("load")
+        .expect("book exists");
+    assert_eq!(book.chapters.len(), 2);
+    assert_eq!(book.chapters[0].id, "fixture-ch1");
+
+    // And the v1 defect is gone: a second book may reuse those chapter ids.
+    let mut clashing = book.clone();
+    clashing.id = "clashing-book".into();
+    clashing.import_hash = "clashing-hash".into();
+    clashing.source_path = "/books/clashing.epub".into();
+    storage
+        .save_book(&clashing, RenderMode::Code, 1_800_000_000_000)
+        .expect("a book sharing chapter ids must save");
+    assert_eq!(
+        storage
+            .book("clashing-book")
+            .expect("load")
+            .expect("book exists")
+            .chapters
+            .len(),
+        2
+    );
+
+    // Migrating twice is a no-op.
+    drop(storage);
+    let paths = AppPaths::from_roots(&scratch.join("data"), &scratch.join("cache"));
+    let reopened = Storage::open(&paths).expect("reopen");
+    assert_eq!(
+        reopened
+            .book("fixture-book")
+            .expect("load")
+            .expect("book exists")
+            .chapters
+            .len(),
+        2
+    );
+    std::fs::remove_dir_all(scratch).ok();
+}
+
+#[test]
 fn a_v1_database_stays_writable_after_being_opened_by_v2() {
     let (mut storage, scratch) = open_fixture("writable");
 

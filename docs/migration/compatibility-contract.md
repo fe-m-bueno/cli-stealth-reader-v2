@@ -56,17 +56,22 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Toggl | Pending | `reader-integrations` not yet written |
 | Startup CLI | Pending | binary not yet written |
 
-## Inherited constraints
+## Defects found in v1 and fixed here
 
-Two v1 behaviors are reproduced deliberately even though they are defects, because
-changing them would break stored data or established output:
+Auditing v1 for parity surfaced two defects. Both are fixed rather than
+reproduced, and both are documented with their migration and their guard tests in
+[the improvements record](improvements.md):
 
-- `chapters.id` is a global primary key, so two books whose chapter hrefs and
-  indexes collide cannot both be stored. The id derivation (`sha1("<href>:<index>")`)
-  does not include the book, so this is reachable in principle. Fixing it means a
-  schema migration and is out of scope for the parity gate.
-- Wrapping discards leading whitespace, so a list item's indent is lost in plain
-  mode. This is visible in v1 output and pinned by the render golden files.
+- Two books whose chapter hrefs collided could not both be stored, because
+  `chapters.id` was a global primary key derived without the book. The key is now
+  per book, and opening a v1 database migrates it without losing rows.
+- A list item lost its indent when wrapped, since the bullet was folded into the
+  text before the word split. The marker is now applied per line, with
+  continuation lines hanging under the text.
+
+The render parity suite names the cases where this divergence is expected and
+asserts both the v1 and v2 shapes, so the improvement cannot silently regress and
+cannot silently spread.
 
 ## Acceptance rule
 
