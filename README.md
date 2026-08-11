@@ -73,6 +73,34 @@ stealth-reader ./livros/dune.epub
 Se `~/.cargo/bin` ainda não estiver no `PATH`, adicione-o ao shell antes de
 abrir um terminal novo.
 
+### Instalar o binário da release
+
+Depois que uma release for publicada, a instalação recomendada baixa o
+binário pronto para sua plataforma, valida o checksum e não requer Rust:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fe-m-bueno/cli-stealth-reader-v2/main/install.sh | bash
+```
+
+Por padrão, o binário fica em `~/.local/bin`. Para escolher outro diretório:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fe-m-bueno/cli-stealth-reader-v2/main/install.sh \
+  | STEALTH_READER_INSTALL_DIR="$HOME/bin" bash
+```
+
+### Publicar uma release
+
+Ao criar e enviar uma tag no formato `v*`, o GitHub Actions compila e publica
+artefatos para Linux x86_64, macOS Intel e macOS Apple Silicon:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Cada release inclui um `.tar.gz` por plataforma e seu arquivo `.sha256`.
+
 ## Uso rápido
 
 ```bash
