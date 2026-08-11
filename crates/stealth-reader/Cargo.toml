@@ -1,0 +1,19 @@
+[package]
+name = "stealth-reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap.workspace = true
+
+[lib]
+name = "stealth_reader"
+path = "src/lib.rs"
+
+[[bin]]
+name = "stealth-reader"
+path = "src/main.rs"
