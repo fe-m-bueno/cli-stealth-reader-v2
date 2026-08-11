@@ -10,7 +10,7 @@ import { createRequire } from "node:module";
 function loadJsZip() {
   const v1Dir = process.env.V1_DIR;
   if (!v1Dir) {
-    throw new Error("Set V1_DIR to the cli-stealth-reader (v1) checkout.");
+    throw new Error("Set V1_DIR to the stealth-reader-v0 checkout.");
   }
   const require = createRequire(path.join(path.resolve(v1Dir), "package.json"));
   return require("jszip");

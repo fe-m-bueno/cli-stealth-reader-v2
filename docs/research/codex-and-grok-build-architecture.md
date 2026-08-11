@@ -33,7 +33,7 @@ adopting, and one is not:
   per-page text plus `lopdf` for metadata, and keeps `pdf-inspector` in mind if
   scanned-page classification becomes a requirement.
 
-## Adaptation for cli-stealth-reader-v2
+## Adaptation for stealth-reader
 
 This reader needs the same direction but not the same scale. It will use a small capability workspace, introduce crates only with working vertical slices, and avoid generated manifests, vendored third-party trees, Bazel, or a bespoke tool bootstrap. The useful standards are dependency direction, thin entry points, testable TUI state/rendering, centralized lints, committed lockfiles, and scoped checks.
 

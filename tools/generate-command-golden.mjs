@@ -1,6 +1,6 @@
 // Generates the command parity fixture from the v1 implementation.
 //
-//   V1_DIR=~/Development/cli-stealth-reader node tools/generate-command-golden.mjs
+//   V1_DIR=~/Development/stealth-reader-v0 node tools/generate-command-golden.mjs
 //
 // Output: crates/reader-core/tests/golden/command-parity.json — parse results
 // (or error messages), contextual hints, manual text at several widths, and
@@ -12,7 +12,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const v1Dir = path.resolve(
-  process.env.V1_DIR ?? path.join(os.homedir(), "Development", "cli-stealth-reader")
+  process.env.V1_DIR ?? path.join(os.homedir(), "Development", "stealth-reader-v0")
 );
 const distDir = path.join(v1Dir, "dist");
 if (!fs.existsSync(distDir)) {

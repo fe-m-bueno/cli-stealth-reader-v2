@@ -1,7 +1,7 @@
 // Creates a library database with the v1 implementation, for the v2
 // compatibility test.
 //
-//   V1_DIR=~/Development/cli-stealth-reader node tools/generate-storage-fixture.mjs
+//   V1_DIR=~/Development/stealth-reader-v0 node tools/generate-storage-fixture.mjs
 //
 // Writes crates/reader-storage/tests/fixtures/v1-library.db (plus a JSON
 // description of what it contains). The database is committed so the Rust suite
@@ -13,7 +13,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const v1Dir = path.resolve(
-  process.env.V1_DIR ?? path.join(os.homedir(), "Development", "cli-stealth-reader")
+  process.env.V1_DIR ?? path.join(os.homedir(), "Development", "stealth-reader-v0")
 );
 const distDir = path.join(v1Dir, "dist");
 if (!fs.existsSync(distDir)) {

@@ -8,7 +8,7 @@ Both runtimes are measured against the same generated corpus so numbers are comp
 
 ```bash
 # v1 (requires `npm run build` in the v1 checkout)
-V1_DIR=~/Development/cli-stealth-reader node bench/v1-baseline.mjs --json
+V1_DIR=~/Development/stealth-reader-v0 node bench/v1-baseline.mjs --json
 
 # v2
 cargo run --release -p reader-bench -- --json
@@ -108,10 +108,10 @@ drawing its own frame.
 
 ```bash
 # 1. Build both sides.
-(cd ~/Development/cli-stealth-reader && npm run build)
+(cd ~/Development/stealth-reader-v0 && npm run build)
 cargo build --release -p reader-bench -p stealth-reader
 
 # 2. Measure. The first run generates the shared corpus; later runs reuse it.
-V1_DIR=~/Development/cli-stealth-reader node bench/v1-baseline.mjs --json
+V1_DIR=~/Development/stealth-reader-v0 node bench/v1-baseline.mjs --json
 ./target/release/reader-bench
 ```

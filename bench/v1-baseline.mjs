@@ -1,7 +1,7 @@
 // Measures the v1 (TypeScript/Node) performance baseline for issue #32.
 //
 // Usage:
-//   V1_DIR=~/Development/cli-stealth-reader node bench/v1-baseline.mjs [--json]
+//   V1_DIR=~/Development/stealth-reader-v0 node bench/v1-baseline.mjs [--json]
 //
 // Requires the v1 build output (`npm run build` in V1_DIR). Every measurement is
 // repeated and reported as median plus min/max so a rerun is comparable.
@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
 
-const v1Dir = path.resolve(process.env.V1_DIR ?? path.join(os.homedir(), "Development", "cli-stealth-reader"));
+const v1Dir = path.resolve(process.env.V1_DIR ?? path.join(os.homedir(), "Development", "stealth-reader-v0"));
 const distDir = path.join(v1Dir, "dist");
 if (!fs.existsSync(distDir)) {
   throw new Error(`Missing ${distDir}. Run "npm run build" in the v1 checkout first.`);
