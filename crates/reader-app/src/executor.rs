@@ -131,6 +131,20 @@ pub fn import_and_open(
     path: &std::path::Path,
     context: CommandContext,
 ) -> Result<()> {
+    import_book(state, storage, path, context).map(|_| ())
+}
+
+/// Import one file, reporting whether it parsed.
+///
+/// A file that will not parse is a status message rather than an error, because
+/// the reader is still running and the next file might be fine — but a caller
+/// importing a whole set needs to know which ones did not make it.
+pub fn import_book(
+    state: &mut ReaderState,
+    storage: &mut Storage,
+    path: &std::path::Path,
+    context: CommandContext,
+) -> Result<bool> {
     match reader_formats::import_file(path) {
         Ok(book) => {
             let stored_id = storage.save_book(&book, state.settings.render_mode, context.now)?;
@@ -141,11 +155,11 @@ pub fn import_and_open(
             let title = book.title.clone();
             open_book(state, storage, book, context)?;
             state.status = format!("Imported {title}");
-            Ok(())
+            Ok(true)
         }
         Err(error) => {
             state.status = format!("Import failed: {error}");
-            Ok(())
+            Ok(false)
         }
     }
 }
@@ -612,6 +626,9 @@ fn dispatch(
 
         "keyboardshortcuts" => {
             state.open_overlay(Overlay::Keys, 0);
+            // Twenty-nine bindings at once is a wall of text; only the six a
+            // reader needs first are open, and the rest are one Enter away.
+            crate::shortcuts_panel::open(state);
             state.status = "Enter folds a group · z folds all · / searches".to_owned();
             Ok(())
         }

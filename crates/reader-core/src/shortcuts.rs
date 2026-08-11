@@ -3,6 +3,9 @@
 /// Grouping used by the overlay's collapsible sections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ShortcutCategory {
+    /// The handful of keys a reader needs before anything else. This group is
+    /// listed first and opened by default; the rest start folded.
+    Essentials,
     Navigation,
     Commands,
     View,
@@ -10,11 +13,28 @@ pub enum ShortcutCategory {
 
 impl ShortcutCategory {
     /// Display order of the sections.
-    pub const ALL: [Self; 3] = [Self::Navigation, Self::Commands, Self::View];
+    pub const ALL: [Self; 4] = [
+        Self::Essentials,
+        Self::Navigation,
+        Self::Commands,
+        Self::View,
+    ];
+
+    /// Human-readable name of the section.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Essentials => "Essentials",
+            Self::Navigation => "Navigation",
+            Self::Commands => "Commands",
+            Self::View => "View",
+        }
+    }
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Essentials => "essentials",
             Self::Navigation => "navigation",
             Self::Commands => "commands",
             Self::View => "view",
@@ -49,7 +69,7 @@ const fn shortcut(
     }
 }
 
-use ShortcutCategory::{Commands, Navigation, View};
+use ShortcutCategory::{Commands, Essentials, Navigation, View};
 
 /// The catalogue, in the order the overlay lists it.
 pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
@@ -75,9 +95,9 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
         "n / Shift+N",
         "Next / previous search match (after /search)",
     ),
-    shortcut(Commands, "/", "Focus command bar"),
-    shortcut(Commands, "Enter", "Run command / confirm picker"),
-    shortcut(Commands, "Esc", "Close overlay or blur command input"),
+    shortcut(Essentials, "/", "Focus command bar"),
+    shortcut(Essentials, "Enter", "Run command / confirm picker"),
+    shortcut(Essentials, "Esc", "Close overlay or blur command input"),
     shortcut(
         Commands,
         "d",
@@ -89,7 +109,7 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
         "r (books)",
         "Reverse sort direction in book library",
     ),
-    shortcut(Commands, "? / Ctrl+. / Ctrl+X", "Open keyboard shortcuts"),
+    shortcut(Essentials, "? / Ctrl+. / Ctrl+X", "Open keyboard shortcuts"),
     shortcut(
         View,
         "m",
@@ -99,7 +119,7 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
     shortcut(View, "c", "Open colorscheme picker"),
     shortcut(View, "Shift+C", "Open theme picker"),
     shortcut(
-        View,
+        Essentials,
         "Shift+S",
         "Open tabbed reader settings with live preview",
     ),
@@ -109,7 +129,7 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
         "Cycle progress display (time left / % bars / hidden)",
     ),
     shortcut(View, "Tab", "Autocomplete or cycle command suggestions"),
-    shortcut(View, "q", "Quit the reader"),
+    shortcut(Essentials, "q", "Quit the reader"),
 ];
 
 /// Shortcuts of one category, in catalogue order.
@@ -153,6 +173,31 @@ mod tests {
             .map(|category| shortcuts_in(category).len())
             .sum();
         assert_eq!(grouped, KEYBOARD_SHORTCUTS.len());
+    }
+
+    #[test]
+    fn the_essentials_group_leads_with_the_keys_a_reader_needs_first() {
+        assert_eq!(ShortcutCategory::ALL[0], ShortcutCategory::Essentials);
+        let essentials: Vec<&str> = shortcuts_in(ShortcutCategory::Essentials)
+            .into_iter()
+            .map(|shortcut| shortcut.key)
+            .collect();
+        assert_eq!(
+            essentials,
+            vec!["/", "Enter", "Esc", "? / Ctrl+. / Ctrl+X", "Shift+S", "q"]
+        );
+    }
+
+    #[test]
+    fn every_category_has_a_name_and_an_identifier() {
+        for category in ShortcutCategory::ALL {
+            assert!(!category.label().is_empty());
+            assert_eq!(
+                ShortcutCategory::from_id(category.as_str()),
+                Some(category),
+                "{category:?} should round-trip through its id"
+            );
+        }
     }
 
     #[test]

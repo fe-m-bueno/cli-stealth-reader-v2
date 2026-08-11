@@ -9,11 +9,16 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use reader_app::{CommandContext, ReaderState, open_book};
+use reader_app::{CommandContext, ReaderState};
 use reader_storage::{AppPaths, Storage};
 
 /// Read EPUB, CBZ, and PDF books in the terminal, in plain text or disguised as
 /// code.
+///
+/// With no arguments the reader scans the configured library directory (see
+/// `/librarydir`) and offers a choice rather than opening anything by itself:
+/// the stored library when it has books, otherwise the files found on disk.
+/// Nothing is reopened automatically — `--resume` is how you ask for that.
 #[derive(Debug, Parser)]
 #[command(name = "stealth-reader", version, about, long_about = None)]
 struct Args {
@@ -24,6 +29,15 @@ struct Args {
     /// Import and open this file instead of showing the library.
     #[arg(value_name = "FILE")]
     file: Option<std::path::PathBuf>,
+}
+
+impl From<&Args> for reader_app::LaunchOptions {
+    fn from(args: &Args) -> Self {
+        Self {
+            resume: args.resume,
+            file: args.file.clone(),
+        }
+    }
 }
 
 /// Exit codes, so a caller can tell a usage problem from a failure.
@@ -71,19 +85,7 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         body_height: layout.body_height,
     };
 
-    if let Some(file) = args.file.as_deref() {
-        reader_app::import_and_open(&mut state, &mut storage, file, context)?;
-    } else if args.resume {
-        match storage.latest_book_id()? {
-            Some(book_id) => match storage.book(&book_id)? {
-                Some(book) => open_book(&mut state, &storage, book, context)?,
-                None => state.status = "The most recent book is no longer in the library.".into(),
-            },
-            None => state.status = "No previous book to resume.".into(),
-        }
-    } else {
-        state.status = "Press / for commands, ? for shortcuts.".into();
-    }
+    reader_app::launch(&mut state, &mut storage, &args.into(), context)?;
 
     reader_tui::run(&mut state, &mut storage)?;
     Ok(())

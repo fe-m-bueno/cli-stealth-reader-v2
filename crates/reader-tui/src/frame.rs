@@ -13,11 +13,15 @@ use ratatui::style::Style as TuiStyle;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use reader_app::{Overlay, OverlayEntry, ReaderState};
-use reader_core::ProgressVisibility;
 use reader_core::pace::{EstimateScope, format_time_left};
 use reader_core::style::Style;
+use reader_core::{ProgressVisibility, RenderMode};
 
+use crate::chrome::{RuleSide, hints, rule, scrollbar_metrics, truncate};
 use crate::style::{to_tui_line, to_tui_style};
+
+/// Columns a progress bar occupies in the metadata row.
+const PROGRESS_BAR_WIDTH: usize = 12;
 
 /// What the command bar is doing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,10 +35,69 @@ pub struct CommandBar {
     pub timer: Option<String>,
 }
 
-/// Rows the footer needs: the status line, plus the command bar when active.
+/// Rows below the closing rule: the command bar while it is active, and the
+/// reading metadata whenever a book is open.
+///
+/// The two rules themselves are not counted here — [`reader_app::compute_layout`]
+/// already reserves them — so this stays the number the layout needs.
 #[must_use]
-pub fn footer_height(command_bar: &CommandBar) -> u16 {
-    if command_bar.active { 2 } else { 1 }
+pub fn footer_height(state: &ReaderState, command_bar: &CommandBar) -> u16 {
+    u16::from(command_bar.active) + u16::from(state.current_book.is_some())
+}
+
+/// Where each part of the frame ends up.
+///
+/// Drawing and pointer handling both work from this, so a click is tested
+/// against the rectangle that was actually painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameGeometry {
+    pub header: Option<Rect>,
+    pub body: Rect,
+    pub status: Option<Rect>,
+    pub command: Option<Rect>,
+    pub metadata: Option<Rect>,
+    /// Column the scrollbar occupies, when one is drawn.
+    pub scrollbar_column: Option<u16>,
+}
+
+/// Lay the frame out for `area`.
+#[must_use]
+pub fn geometry(area: Rect, state: &ReaderState, command_bar: &CommandBar) -> FrameGeometry {
+    let footer_rows = footer_height(state, command_bar);
+    let layout = state.layout(footer_rows);
+
+    // The rules take a row each; whatever is left between them is reading area.
+    let body_rows = area.height.saturating_sub(footer_rows.saturating_add(2));
+    let mut cursor = area.y;
+
+    let header = take_row(area, &mut cursor);
+    let body = Rect {
+        x: area.x,
+        y: cursor,
+        width: area.width,
+        height: body_rows.min(area.height.saturating_sub(cursor - area.y)),
+    };
+    cursor += body.height;
+    let status = take_row(area, &mut cursor);
+    let command = command_bar
+        .active
+        .then(|| take_row(area, &mut cursor))
+        .flatten();
+    let metadata = state
+        .current_book
+        .is_some()
+        .then(|| take_row(area, &mut cursor))
+        .flatten();
+
+    FrameGeometry {
+        header,
+        body,
+        status,
+        command,
+        metadata,
+        scrollbar_column: (layout.scrollbar_width > 0 && body.width > 0)
+            .then(|| body.x + body.width - 1),
+    }
 }
 
 /// Draw the whole frame.
@@ -50,26 +113,138 @@ pub fn draw(
 ) {
     let area = frame.area();
     state.viewport = reader_app::Viewport::new(area.width, area.height);
-    let layout = state.layout(footer_height(command_bar));
+    let layout = state.layout(footer_height(state, command_bar));
+    let FrameGeometry {
+        header: header_area,
+        body: body_area,
+        status: status_area,
+        command: command_area,
+        metadata: metadata_area,
+        ..
+    } = geometry(area, state, command_bar);
 
-    let footer_rows = footer_height(command_bar);
-    let body_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: area.height.saturating_sub(footer_rows),
-    };
-    let footer_area = Rect {
-        x: area.x,
-        y: area.y + body_area.height,
-        width: area.width,
-        height: footer_rows,
-    };
+    let visible = draw_body(frame, body_area, state, &layout);
 
-    draw_body(frame, body_area, state, &layout);
-    draw_footer(frame, footer_area, state, command_bar);
+    if let Some(row) = header_area {
+        let left = header_left(state);
+        let right = header_right(state);
+        frame.render_widget(
+            Paragraph::new(rule(
+                RuleSide::Top,
+                row.width,
+                &left,
+                &right,
+                &state.theme.palette,
+            )),
+            row,
+        );
+    }
+    if let Some(row) = status_area {
+        draw_status_rule(frame, row, state, command_bar);
+    }
+    if let Some(row) = command_area {
+        draw_command_bar(frame, row, state, command_bar);
+    }
+    if let Some(row) = metadata_area {
+        draw_metadata(frame, row, state, &layout, visible);
+    }
+
     if state.overlay != Overlay::None {
         draw_overlay(frame, body_area, state, overlay_entries);
+    }
+}
+
+/// Take the next single row, or nothing when the frame has run out.
+fn take_row(area: Rect, cursor: &mut u16) -> Option<Rect> {
+    if *cursor >= area.y + area.height {
+        return None;
+    }
+    let row = Rect {
+        x: area.x,
+        y: *cursor,
+        width: area.width,
+        height: 1,
+    };
+    *cursor += 1;
+    Some(row)
+}
+
+/// What the reading column currently shows, so the metadata row can say so.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VisibleWindow {
+    offset: usize,
+    rows: usize,
+    total: usize,
+}
+
+/// The book, chapter, and search context, for the opening rule.
+fn header_left(state: &ReaderState) -> String {
+    let Some(book) = state.current_book.as_ref() else {
+        return "stealth-reader".to_owned();
+    };
+    let mut left = format!(
+        "{} · Ch {}/{}",
+        truncate(&book.title, 34),
+        state.chapter_index + 1,
+        book.chapters.len()
+    );
+    if let Some(chapter) = state.chapter() {
+        left.push_str(" · ");
+        left.push_str(&truncate(&chapter.title, 28));
+    }
+    if let Some(search) = state.search.as_ref() {
+        left.push_str(&format!(
+            " · [{}/{}] \"{}\"",
+            search.cursor + 1,
+            search.results.len(),
+            truncate(&search.query, 20)
+        ));
+    }
+    left
+}
+
+/// The render mode, density, focus state, and theme, for the opening rule.
+fn header_right(state: &ReaderState) -> String {
+    let settings = &state.settings;
+    let mut right = match settings.render_mode {
+        RenderMode::Plain => "plain".to_owned(),
+        RenderMode::Code => settings.code_language.as_str().to_owned(),
+    };
+    // Density only means something while code is on screen.
+    if settings.render_mode == RenderMode::Code {
+        right.push_str(&format!(" · density:{}", settings.code_density.get()));
+    }
+    if state.focus_mode {
+        right.push_str(&format!(" · focus §{}", state.focus_block_index + 1));
+    }
+    right.push_str(&format!(
+        " · {} · {}",
+        settings.theme_id.label(),
+        settings.appearance_theme_id.label()
+    ));
+    right
+}
+
+/// The keys that apply right now, for the closing rule.
+fn footer_hints(state: &ReaderState) -> String {
+    match state.overlay {
+        Overlay::Keys if state.overlay_search.active => {
+            hints(&[("Esc", "exit search"), ("Esc Esc", "close")])
+        }
+        Overlay::Keys => hints(&[("Esc", "close"), ("/", "search"), ("Ctrl+.", "close")]),
+        Overlay::None if state.focus_mode => hints(&[
+            ("Esc", "exit focus"),
+            ("/", "commands"),
+            ("Ctrl+.", "shortcuts"),
+            ("q", "quit"),
+        ]),
+        Overlay::None => hints(&[("/", "commands"), ("Ctrl+.", "shortcuts"), ("q", "quit")]),
+        _ => hints(&[
+            ("Esc", "close"),
+            ("/", "commands"),
+            ("Ctrl+.", "shortcuts"),
+            ("q", "quit"),
+        ]),
     }
 }
 
@@ -78,24 +253,10 @@ fn draw_body(
     area: Rect,
     state: &mut ReaderState,
     layout: &reader_app::ViewportLayout,
-) {
-    let border_style = to_tui_style(Style::fg(state.theme.palette.border));
-    let title = match state.current_book.as_ref() {
-        Some(book) => match state.chapter() {
-            Some(chapter) => format!(" {} · {} ", book.title, chapter.title),
-            None => format!(" {} ", book.title),
-        },
-        None => " stealth-reader ".to_owned(),
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(
-            title,
-            to_tui_style(Style::fg(state.theme.palette.accent).bold()),
-        ));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+) -> VisibleWindow {
+    if area.height == 0 || area.width == 0 {
+        return VisibleWindow::default();
+    }
 
     let Some(book) = state.current_book.as_ref() else {
         let hint = Paragraph::new(vec![
@@ -105,17 +266,17 @@ fn draw_body(
                 to_tui_style(Style::fg(state.theme.palette.dim)),
             )),
         ]);
-        frame.render_widget(hint, inner);
-        return;
+        frame.render_widget(hint, area);
+        return VisibleWindow::default();
     };
 
     if book.chapters.get(state.chapter_index).is_none() {
-        return;
+        return VisibleWindow::default();
     }
 
     // The chapter is rendered once per change, not once per frame; only the
     // visible slice is converted to ratatui lines.
-    let body_height = inner.height as usize;
+    let body_height = area.height as usize;
     let block_offset = state.block_offset;
     let lines = state.chapter_lines(layout.content_width);
     let line_count = lines.len();
@@ -130,42 +291,48 @@ fn draw_body(
 
     let padding = layout.content_padding;
     let text_area = Rect {
-        x: inner.x + padding,
-        y: inner.y,
-        width: inner.width.saturating_sub(padding + layout.scrollbar_width),
-        height: inner.height,
+        x: area.x + padding,
+        y: area.y,
+        width: area.width.saturating_sub(padding + layout.scrollbar_width),
+        height: area.height,
     };
     frame.render_widget(Paragraph::new(visible), text_area);
 
-    if layout.scrollbar_width > 0 && inner.width > 0 {
-        draw_scrollbar(frame, inner, state, line_count, offset);
+    if layout.scrollbar_width > 0 {
+        draw_scrollbar(frame, area, state, line_count, offset);
+    }
+
+    VisibleWindow {
+        offset,
+        rows: body_height.min(line_count),
+        total: line_count,
     }
 }
 
 /// A one-column scrollbar whose thumb length reflects how much is visible.
+///
+/// It sits in the reading column's last cell rather than on a border, so the
+/// text edge and the bar stay aligned however wide the margins are.
 fn draw_scrollbar(
     frame: &mut Frame<'_>,
-    inner: Rect,
+    area: Rect,
     state: &ReaderState,
     total_lines: usize,
     offset: usize,
 ) {
-    let height = inner.height as usize;
+    let height = area.height as usize;
     if height == 0 || total_lines <= height {
         return;
     }
     let track_style = to_tui_style(Style::fg(state.theme.palette.border));
     let thumb_style = to_tui_style(Style::fg(state.theme.palette.accent_muted));
-    let thumb_height = ((height * height) / total_lines).max(1);
-    let max_offset = total_lines - height;
-    let thumb_start = (offset * (height - thumb_height))
-        .checked_div(max_offset)
-        .unwrap_or(0);
+    let metrics = scrollbar_metrics(total_lines, height, offset);
 
-    let column = inner.x + inner.width - 1;
+    let column = area.x + area.width - 1;
     let rows: Vec<Line<'static>> = (0..height)
         .map(|row| {
-            let inside = row >= thumb_start && row < thumb_start + thumb_height;
+            let inside =
+                row >= metrics.thumb_offset && row < metrics.thumb_offset + metrics.thumb_height;
             Line::from(Span::styled(
                 if inside { "█" } else { "│" },
                 if inside { thumb_style } else { track_style },
@@ -176,9 +343,9 @@ fn draw_scrollbar(
         Paragraph::new(rows),
         Rect {
             x: column,
-            y: inner.y,
+            y: area.y,
             width: 1,
-            height: inner.height,
+            height: area.height,
         },
     );
 }
@@ -259,58 +426,160 @@ pub fn progress_text(state: &mut ReaderState, content_width: u16, body_height: u
     }
 }
 
-fn draw_footer(
+/// The closing rule: what just happened on the left, what the keys do on the right.
+fn draw_status_rule(
     frame: &mut Frame<'_>,
     area: Rect,
-    state: &mut ReaderState,
+    state: &ReaderState,
     command_bar: &CommandBar,
 ) {
-    let layout = state.layout(footer_height(command_bar));
-    let progress = progress_text(state, layout.content_width, layout.body_height);
-    // A running timer sits alongside the progress, since both answer "how long".
-    let progress = match &command_bar.timer {
-        Some(timer) if progress.is_empty() => Cow::Borrowed(timer.as_str()),
-        Some(timer) => Cow::Owned(format!("{timer} · {progress}")),
-        None => Cow::Owned(progress),
+    let status = if state.status.is_empty() {
+        Cow::Borrowed("Ready")
+    } else {
+        Cow::Borrowed(state.status.as_str())
     };
+    // A running timer belongs with the status: both say what the session is doing.
+    let status = match &command_bar.timer {
+        Some(timer) => Cow::Owned(format!("{timer} · {status}")),
+        None => status,
+    };
+    frame.render_widget(
+        Paragraph::new(rule(
+            RuleSide::Bottom,
+            area.width,
+            &status,
+            &footer_hints(state),
+            &state.theme.palette,
+        )),
+        area,
+    );
+}
 
-    let mut rows: Vec<Line<'_>> = Vec::new();
-    if command_bar.active {
-        rows.push(Line::from(vec![
+fn draw_command_bar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &ReaderState,
+    command_bar: &CommandBar,
+) {
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
             Span::styled(
                 "/",
                 to_tui_style(Style::fg(state.theme.palette.accent).bold()),
             ),
             Span::styled(
-                command_bar.buffer.as_str(),
+                command_bar.buffer.clone(),
                 to_tui_style(Style::fg(state.theme.palette.foreground)),
             ),
-        ]));
+        ])),
+        area,
+    );
+}
+
+/// Where the reader is: chapter, rendered lines on screen, focus section, search
+/// match — and, on the right, how much is left.
+fn draw_metadata(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &mut ReaderState,
+    layout: &reader_app::ViewportLayout,
+    visible: VisibleWindow,
+) {
+    let left = position_text(state, visible);
+    let progress = progress_text(state, layout.content_width, layout.body_height);
+    let bar = progress_bar_value(state, layout.content_width, layout.body_height);
+
+    let palette = &state.theme.palette;
+    let mut right: Vec<Span<'static>> = Vec::new();
+    if let Some(value) = bar {
+        right.extend(progress_bar(value, PROGRESS_BAR_WIDTH, palette));
+        right.push(Span::raw(" "));
+    }
+    if !progress.is_empty() {
+        right.push(Span::styled(
+            progress.clone(),
+            to_tui_style(Style::fg(palette.accent_muted)),
+        ));
     }
 
-    // Progress is right-aligned; the status keeps whatever is left.
     let width = area.width as usize;
-    let progress_width = progress.chars().count();
-    let status_width = width.saturating_sub(progress_width + 1);
-    let status_length = state.status.chars().count();
-    let trimmed = if status_length <= status_width {
-        Cow::Borrowed(state.status.as_str())
-    } else {
-        Cow::Owned(state.status.chars().take(status_width).collect::<String>())
-    };
+    let right_width: usize = right
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    let left = truncate(&left, width.saturating_sub(right_width + 1));
     let gap = width
-        .saturating_sub(status_length.min(status_width))
-        .saturating_sub(progress_width);
-    rows.push(Line::from(vec![
-        Span::styled(trimmed, to_tui_style(Style::fg(state.theme.palette.dim))),
-        Span::raw(" ".repeat(gap)),
-        Span::styled(
-            progress,
-            to_tui_style(Style::fg(state.theme.palette.accent_muted)),
-        ),
-    ]));
+        .saturating_sub(left.chars().count())
+        .saturating_sub(right_width);
 
-    frame.render_widget(Paragraph::new(rows), area);
+    let mut spans = vec![Span::styled(left, to_tui_style(Style::fg(palette.dim)))];
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.extend(right);
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// `Ch 2/12 · ln 31–52/480 · §4/9 · match 2/7`, as far as it fits.
+fn position_text(state: &mut ReaderState, visible: VisibleWindow) -> String {
+    let Some(book) = state.current_book.as_ref() else {
+        return String::new();
+    };
+    let chapters = book.chapters.len();
+    let first = if visible.total == 0 {
+        0
+    } else {
+        visible.offset + 1
+    };
+    let last = (visible.offset + visible.rows).min(visible.total);
+    let mut text = format!(
+        "Ch {}/{} · ln {first}–{last}/{}",
+        state.chapter_index + 1,
+        chapters,
+        visible.total
+    );
+    if state.focus_mode {
+        text.push_str(&format!(
+            " · §{}/{}",
+            state.focus_block_index + 1,
+            state.chapter_block_count()
+        ));
+    }
+    if let Some(search) = state.search.as_ref() {
+        text.push_str(&format!(
+            " · match {}/{}",
+            search.cursor + 1,
+            search.results.len()
+        ));
+    }
+    text
+}
+
+/// The fraction a bar should show, or `None` when the setting asks for words.
+fn progress_bar_value(
+    state: &mut ReaderState,
+    content_width: u16,
+    body_height: u16,
+) -> Option<f64> {
+    state.current_book.as_ref()?;
+    match state.settings.progress_visibility {
+        ProgressVisibility::Chapter => Some(state.chapter_progress(content_width, body_height)),
+        ProgressVisibility::Book | ProgressVisibility::Both => {
+            Some(state.book_progress(content_width, body_height))
+        }
+        ProgressVisibility::Hidden
+        | ProgressVisibility::TimeChapter
+        | ProgressVisibility::TimeBook => None,
+    }
+}
+
+fn progress_bar(value: f64, width: usize, palette: &reader_core::Palette) -> Vec<Span<'static>> {
+    let filled = ((value.clamp(0.0, 1.0) * width as f64).round() as usize).min(width);
+    vec![
+        Span::styled("█".repeat(filled), to_tui_style(Style::fg(palette.accent))),
+        Span::styled(
+            "░".repeat(width - filled),
+            to_tui_style(Style::fg(palette.border)),
+        ),
+    ]
 }
 
 /// The overlay's heading, including what is filtering it.
@@ -322,26 +591,35 @@ fn overlay_title(state: &ReaderState) -> String {
         Overlay::Notes => "Notes",
         Overlay::ColorSchemes => "Colorschemes",
         Overlay::Themes => "Themes",
-        Overlay::Settings => "Settings",
-        Overlay::Keys => "Keyboard shortcuts",
+        Overlay::Settings => "Reader settings",
+        Overlay::Keys => "Keyboard Shortcuts",
         Overlay::Diagnostics if !state.integration_report.is_empty() => "Toggl",
         Overlay::Diagnostics => "Import diagnostics",
-        Overlay::FilePicker => "Add a book",
+        Overlay::FilePicker => "Add Books",
         Overlay::Help => "Manual",
         Overlay::None => "",
     };
 
-    // The library says how it is sorted; every overlay says what it is filtered by.
+    // The library says how it is sorted; the modal's own search row shows the
+    // query, so the title only carries what the list is otherwise scoped by.
     let sort = if state.overlay == Overlay::Books {
         let arrow = match state.library_sort_direction {
             reader_core::SortDirection::Ascending => '↑',
             reader_core::SortDirection::Descending => '↓',
         };
-        format!(" · {} {arrow}", state.library_sort_key.label())
+        let tag = match state.books_tag_filter.as_deref() {
+            Some(tag) => format!(" · #{tag}"),
+            None => String::new(),
+        };
+        format!(" · Sort: {} {arrow}{tag}", state.library_sort_key.label())
     } else {
         String::new()
     };
-    let search = if state.overlay_search.active {
+    // A modal shows its query in its own search row; a side list has no room
+    // for one, so its title carries it instead.
+    let search = if state.overlay.is_modal() {
+        String::new()
+    } else if state.overlay_search.active {
         format!(" · /{}", state.overlay_search.buffer)
     } else if !state.overlay_search.query().is_empty() {
         format!(" · {}", state.overlay_search.query())
@@ -351,20 +629,81 @@ fn overlay_title(state: &ReaderState) -> String {
     format!("{name}{sort}{search}")
 }
 
+/// The keys the open modal responds to.
+fn overlay_hints(state: &ReaderState) -> String {
+    if state.overlay_search.active {
+        return hints(&[("Esc", "exit search"), ("Enter", "confirm")]);
+    }
+    match state.overlay {
+        Overlay::Keys => hints(&[
+            ("↑/↓", "nav"),
+            ("Enter/Space", "expand"),
+            ("/", "search"),
+            ("Esc", "close"),
+        ]),
+        Overlay::Books => hints(&[
+            ("Enter", "open"),
+            ("s/r", "sort"),
+            ("/", "search"),
+            ("Esc", "close"),
+        ]),
+        Overlay::FilePicker => hints(&[
+            ("Space", "select"),
+            ("Enter", "import"),
+            ("/", "search"),
+            ("Esc", "close"),
+        ]),
+        _ => hints(&[("↑/↓", "nav"), ("Enter", "confirm"), ("Esc", "close")]),
+    }
+}
+
+/// What an empty modal should say, which is rarely "nothing here".
+fn overlay_empty_message(state: &ReaderState) -> String {
+    if !state.overlay_search.query().is_empty() {
+        return "Nothing matches.".to_owned();
+    }
+    match state.overlay {
+        Overlay::Keys => "No shortcuts match.".to_owned(),
+        Overlay::Books => {
+            "The library is empty. Press Esc, then / and type add to import a book.".to_owned()
+        }
+        Overlay::FilePicker => format!(
+            "No EPUB, CBZ, or PDF files under {}.",
+            state.library_directory.display()
+        ),
+        Overlay::Diagnostics => "Nothing to report.".to_owned(),
+        _ => "Nothing here yet.".to_owned(),
+    }
+}
+
 fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState, entries: &[OverlayEntry]) {
+    if state.overlay == Overlay::Settings {
+        crate::settings_page::draw(frame, area, state, entries);
+        return;
+    }
+    if state.overlay.is_modal() {
+        crate::modals::draw_modal(
+            frame,
+            area,
+            state,
+            entries,
+            &crate::modals::ModalSpec {
+                title: overlay_title(state),
+                placeholder: "/ to search",
+                hints: overlay_hints(state),
+                empty: overlay_empty_message(state),
+            },
+        );
+        return;
+    }
+
     let title = overlay_title(state);
     let palette = &state.theme.palette;
 
-    let overlay_area = if state.overlay.is_modal() || state.overlay == Overlay::Help {
+    let overlay_area = if state.overlay == Overlay::Help {
         centred(area, 80, 90)
     } else {
-        let width = (area.width / 3).clamp(20, 46);
-        Rect {
-            x: area.x + area.width.saturating_sub(width),
-            y: area.y,
-            width,
-            height: area.height,
-        }
+        side_overlay_area(area)
     };
 
     frame.render_widget(Clear, overlay_area);
@@ -396,10 +735,7 @@ fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState, entries:
     }
 
     // Keep the cursor in view by scrolling the window around it.
-    let start = state
-        .overlay_cursor
-        .saturating_sub(height / 2)
-        .min(entries.len().saturating_sub(height));
+    let start = crate::chrome::window_start(entries.len(), height, state.overlay_cursor);
     let rows: Vec<Line<'static>> = entries
         .iter()
         .enumerate()
@@ -417,6 +753,18 @@ fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState, entries:
         })
         .collect();
     frame.render_widget(Paragraph::new(rows).style(TuiStyle::default()), inner);
+}
+
+/// The column a side overlay occupies, on the right of the reading area.
+#[must_use]
+pub fn side_overlay_area(area: Rect) -> Rect {
+    let width = (area.width / 3).clamp(20, 46).min(area.width);
+    Rect {
+        x: area.x + area.width.saturating_sub(width),
+        y: area.y,
+        width,
+        height: area.height,
+    }
 }
 
 /// A centred rectangle taking `width_percent` × `height_percent` of `area`.
@@ -514,11 +862,11 @@ mod tests {
     #[test]
     fn the_frame_shows_the_book_the_chapter_and_the_status() {
         let mut state = reader();
-        let rows = render(&mut state, &CommandBar::default(), 60, 12);
+        let rows = render(&mut state, &CommandBar::default(), 78, 12);
 
         assert!(
-            rows[0].contains("Quiet Harbour · Chapter 1"),
-            "title row was {:?}",
+            rows[0].contains("Quiet Harbour · Ch 1/3 · Chapter 1"),
+            "header row was {:?}",
             rows[0]
         );
         assert!(
@@ -526,12 +874,132 @@ mod tests {
             "the body should show prose: {rows:?}"
         );
         assert!(
-            rows.last()
-                .expect("a footer row")
-                .contains("Opened Quiet Harbour"),
-            "footer was {:?}",
-            rows.last()
+            rows.iter().any(|row| row.contains("Opened Quiet Harbour")),
+            "the status belongs on the closing rule: {rows:?}"
         );
+    }
+
+    #[test]
+    fn the_reading_frame_is_ruled_top_and_bottom_and_never_walled() {
+        let mut state = reader();
+        let rows = render(&mut state, &CommandBar::default(), 78, 12);
+
+        assert!(rows[0].starts_with('╭'), "{:?}", rows[0]);
+        assert!(rows[0].ends_with('╮'), "{:?}", rows[0]);
+        let closing = rows
+            .iter()
+            .find(|row| row.starts_with('╰'))
+            .expect("a closing rule");
+        assert!(closing.ends_with('╯'), "{closing:?}");
+
+        // Everything between the rules is text, a margin, or the scrollbar.
+        let body = &rows[1..rows.len() - 2];
+        for row in body {
+            assert!(!row.starts_with('│'), "a body row was walled: {row:?}");
+            assert!(!row.starts_with('╭') && !row.starts_with('╰'), "{row:?}");
+        }
+    }
+
+    #[test]
+    fn the_header_carries_the_mode_density_and_theme() {
+        let mut state = reader();
+        let plain = render(&mut state, &CommandBar::default(), 100, 12);
+        assert!(plain[0].contains("plain"), "{:?}", plain[0]);
+        assert!(
+            plain[0].contains("Codex"),
+            "the colorscheme: {:?}",
+            plain[0]
+        );
+        assert!(plain[0].contains("Dark"), "the appearance: {:?}", plain[0]);
+        assert!(
+            !plain[0].contains("density"),
+            "plain mode has no density: {:?}",
+            plain[0]
+        );
+
+        state.settings.render_mode = RenderMode::Code;
+        state.settings.code_language = reader_core::CodeLanguage::Rust;
+        let code = render(&mut state, &CommandBar::default(), 100, 12);
+        assert!(code[0].contains("rust · density:"), "{:?}", code[0]);
+    }
+
+    #[test]
+    fn the_header_shows_focus_and_search_context() {
+        let mut state = reader();
+        state.focus_mode = true;
+        state.focus_block_index = 2;
+        state.search = Some(reader_app::SearchState {
+            query: "lantern".into(),
+            global: false,
+            results: vec![reader_app::SearchHit {
+                chapter_index: 0,
+                block_index: 1,
+                line_index: 0,
+            }],
+            cursor: 0,
+        });
+
+        let rows = render(&mut state, &CommandBar::default(), 110, 12);
+
+        assert!(rows[0].contains("focus §3"), "{:?}", rows[0]);
+        assert!(rows[0].contains("[1/1] \"lantern\""), "{:?}", rows[0]);
+    }
+
+    #[test]
+    fn the_metadata_row_reports_the_lines_on_screen_and_follows_scrolling() {
+        let mut state = reader();
+        let top = render(&mut state, &CommandBar::default(), 78, 14);
+        let first = top.last().expect("a metadata row").clone();
+        assert!(first.contains("Ch 1/3 · ln 1–"), "{first:?}");
+
+        state.block_offset = 5;
+        let scrolled = render(&mut state, &CommandBar::default(), 78, 14);
+        let second = scrolled.last().expect("a metadata row");
+        assert!(second.contains("ln 6–"), "{second:?}");
+        assert_ne!(&first, second, "scrolling changes the metadata");
+    }
+
+    #[test]
+    fn the_metadata_row_reports_focus_sections_and_search_matches() {
+        let mut state = reader();
+        state.focus_mode = true;
+        state.focus_block_index = 1;
+        state.search = Some(reader_app::SearchState {
+            query: "harbour".into(),
+            global: true,
+            results: vec![
+                reader_app::SearchHit {
+                    chapter_index: 0,
+                    block_index: 0,
+                    line_index: 0,
+                },
+                reader_app::SearchHit {
+                    chapter_index: 1,
+                    block_index: 0,
+                    line_index: 0,
+                },
+            ],
+            cursor: 1,
+        });
+
+        let rows = render(&mut state, &CommandBar::default(), 110, 14);
+        let metadata = rows.last().expect("a metadata row");
+
+        assert!(metadata.contains("§2/8"), "{metadata:?}");
+        assert!(metadata.contains("match 2/2"), "{metadata:?}");
+    }
+
+    #[test]
+    fn hiding_the_progress_keeps_the_position_metadata() {
+        let mut state = reader();
+        state.settings.progress_visibility = ProgressVisibility::Hidden;
+
+        let rows = render(&mut state, &CommandBar::default(), 78, 14);
+        let metadata = rows.last().expect("a metadata row");
+
+        assert!(metadata.contains("ln 1–"), "{metadata:?}");
+        assert!(!metadata.contains('█'), "no bar when hidden: {metadata:?}");
+        assert!(!metadata.contains('%'), "{metadata:?}");
     }
 
     #[test]
@@ -574,10 +1042,17 @@ mod tests {
             cursor: 6,
             timer: None,
         };
-        assert_eq!(footer_height(&inactive), 1);
-        assert_eq!(footer_height(&active), 2);
-
         let mut state = reader();
+        assert_eq!(footer_height(&state, &inactive), 1);
+        assert_eq!(footer_height(&state, &active), 2);
+
+        let empty = ReaderState::new(AppSettings::default());
+        assert_eq!(
+            footer_height(&empty, &inactive),
+            0,
+            "without a book there is nothing to report"
+        );
+
         let rows = render(&mut state, &active, 60, 12);
         assert!(
             rows[rows.len() - 2].starts_with("/goto 2"),
@@ -644,7 +1119,10 @@ mod tests {
 
         let rows = render(&mut state, &CommandBar::default(), 70, 12);
 
-        assert!(rows[0].contains("Chapters"), "{:?}", rows[0]);
+        assert!(
+            rows.iter().any(|row| row.contains("Chapters")),
+            "the overlay names itself: {rows:?}"
+        );
         assert!(
             rows.iter().any(|row| row.contains("Chapter 2")),
             "the overlay should list chapters: {rows:?}"
@@ -666,25 +1144,240 @@ mod tests {
     }
 
     #[test]
-    fn the_shortcut_overlay_lists_key_bindings_and_scrolls_to_the_cursor() {
+    fn the_shortcut_modal_names_itself_groups_its_rows_and_offers_a_search() {
+        let mut state = reader();
+        state.overlay = Overlay::Keys;
+        reader_app::shortcuts_panel::open(&mut state);
+
+        let rows = render(&mut state, &CommandBar::default(), 80, 22);
+        let screen = rows.join("\n");
+
+        assert!(screen.contains("Keyboard Shortcuts"), "{screen}");
+        assert!(screen.contains("[×]"), "the close control: {screen}");
+        assert!(screen.contains("/ to search"), "{screen}");
+        assert!(screen.contains("◆ Essentials"), "{screen}");
+        assert!(screen.contains("› Navigation ("), "folded: {screen}");
+        assert!(
+            screen.contains("Enter/Space:expand"),
+            "the footer hints: {screen}"
+        );
+
+        // Key and description are separate columns, so the keys line up.
+        let quit = rows
+            .iter()
+            .find(|row| row.contains("Quit the reader"))
+            .expect("the quit binding");
+        assert!(quit.trim_end().ends_with('│'), "{quit:?}");
+        assert!(quit.contains("Quit the reader"), "{quit:?}");
+    }
+
+    #[test]
+    fn the_shortcut_modal_darkens_the_reader_behind_it() {
         let mut state = reader();
         state.overlay = Overlay::Keys;
 
-        let from_top = render(&mut state, &CommandBar::default(), 80, 20);
-        assert!(
-            from_top.iter().any(|row| row.contains("Scroll up")),
-            "the first bindings should be visible: {from_top:?}"
-        );
+        let storage = reader_storage::Storage::open_in_memory().expect("database");
+        let entries = reader_app::visible_entries(&state, &storage, 0);
+        let mut terminal =
+            Terminal::new(TestBackend::new(90, 24)).expect("test backend should build");
+        terminal
+            .draw(|frame| draw(frame, &mut state, &CommandBar::default(), &entries))
+            .expect("drawing should succeed");
+        let buffer = terminal.backend().buffer().clone();
 
-        // The last binding is off-screen until the cursor reaches it.
-        state.overlay_cursor = reader_core::KEYBOARD_SHORTCUTS.len() - 1;
-        let from_bottom = render(&mut state, &CommandBar::default(), 80, 20);
-        assert!(
-            from_bottom
-                .iter()
-                .any(|row| row.contains("Quit the reader")),
-            "the window should follow the cursor: {from_bottom:?}"
+        let subtle = crate::style::to_tui_color(state.theme.palette.subtle);
+        let modal = crate::modals::modal_geometry(ratatui::layout::Rect {
+            x: 0,
+            y: 1,
+            width: 90,
+            height: 22,
+        });
+        // A cell of the reading column, well outside the modal.
+        let cell = &buffer[(1, modal.area.y)];
+        assert_eq!(
+            cell.style().fg,
+            Some(subtle),
+            "the page behind should read as background"
         );
+    }
+
+    #[test]
+    fn a_shortcut_search_shows_the_query_and_only_what_matches() {
+        let mut state = reader();
+        state.overlay = Overlay::Keys;
+        reader_app::shortcuts_panel::open(&mut state);
+        state.overlay_search.active = true;
+        state.overlay_search.buffer = "bookmark".into();
+
+        let screen = render(&mut state, &CommandBar::default(), 84, 22).join("\n");
+
+        assert!(
+            screen.contains("/ bookmark"),
+            "the query is visible: {screen}"
+        );
+        assert!(screen.contains("Open bookmarks"), "{screen}");
+        assert!(
+            !screen.contains("Jump to top"),
+            "non-matching bindings stay out: {screen}"
+        );
+        assert!(
+            screen.contains("Esc:exit search"),
+            "the footer distinguishes leaving search from closing: {screen}"
+        );
+    }
+
+    #[test]
+    fn the_shortcut_modal_scrolls_to_keep_the_cursor_in_view() {
+        let mut state = reader();
+        state.overlay = Overlay::Keys;
+        let rows = reader_app::shortcuts_panel::rows(&state).len();
+        state.overlay_cursor = rows - 1;
+
+        let screen = render(&mut state, &CommandBar::default(), 84, 22).join("\n");
+
+        assert!(
+            screen.contains("Quit the reader") || screen.contains("Autocomplete"),
+            "the window follows the cursor to the end: {screen}"
+        );
+    }
+
+    #[test]
+    fn every_settings_tab_shows_its_own_controls_and_marks_itself_active() {
+        let mut state = reader();
+        state.overlay = Overlay::Settings;
+        reader_app::settings_panel::open(&mut state);
+
+        let expected = [
+            (reader_core::SettingsTab::Themes, "Colorscheme", "Margin"),
+            (
+                reader_core::SettingsTab::Reading,
+                "Code density",
+                "Colorscheme",
+            ),
+            (reader_core::SettingsTab::Layout, "Margin", "Code density"),
+            (reader_core::SettingsTab::More, "Mouse capture", "Margin"),
+        ];
+        for (tab, present, absent) in expected {
+            state.settings_tab = tab;
+            let screen = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+            assert!(screen.contains("Reader settings"), "{screen}");
+            assert!(
+                screen.contains(present),
+                "{tab:?} should show {present}:\n{screen}"
+            );
+            assert!(
+                !screen.contains(&format!("› {absent}"))
+                    && !screen.contains(&format!("  {absent} ")),
+                "{tab:?} should not show {absent}:\n{screen}"
+            );
+            assert!(screen.contains(tab.label()), "the tab strip: {screen}");
+        }
+    }
+
+    #[test]
+    fn the_settings_page_shows_a_search_row_a_description_and_a_preview() {
+        let mut state = reader();
+        state.overlay = Overlay::Settings;
+        reader_app::settings_panel::open(&mut state);
+
+        let screen = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+
+        assert!(screen.contains("Search settings..."), "{screen}");
+        assert!(
+            screen.contains("Accent color palette"),
+            "the selected row explains itself:\n{screen}"
+        );
+        assert!(screen.contains("Preview"), "{screen}");
+        assert!(
+            screen.contains("A quiet chapter begins here."),
+            "the preview renders the draft:\n{screen}"
+        );
+        assert!(
+            screen.contains("←/→ tab")
+                && screen.contains("Enter save")
+                && screen.contains("Esc cancel"),
+            "the footer explains every key:\n{screen}"
+        );
+    }
+
+    #[test]
+    fn the_settings_preview_follows_the_draft_without_persisting_it() {
+        let mut state = reader();
+        state.overlay = Overlay::Settings;
+        reader_app::settings_panel::open(&mut state);
+
+        let plain = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+        assert!(plain.contains("A quiet chapter begins here."), "{plain}");
+
+        state.settings.render_mode = RenderMode::Code;
+        state.settings.code_language = reader_core::CodeLanguage::TypeScript;
+        let disguised = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+
+        assert!(
+            disguised.contains("const") || disguised.contains('='),
+            "the preview follows the draft mode:\n{disguised}"
+        );
+        assert!(
+            state.settings_backup.is_some(),
+            "the pre-open settings are still held for a cancel"
+        );
+    }
+
+    #[test]
+    fn a_settings_search_narrows_the_rows_and_says_when_nothing_matches() {
+        let mut state = reader();
+        state.overlay = Overlay::Settings;
+        reader_app::settings_panel::open(&mut state);
+        state.overlay_search.active = true;
+        state.overlay_search.buffer = "appearance".into();
+
+        let found = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+        assert!(found.contains("Appearance"), "{found}");
+        assert!(!found.contains("› Colorscheme"), "{found}");
+
+        state.overlay_search.buffer = "zzz".into();
+        let empty = render(&mut state, &CommandBar::default(), 100, 30).join("\n");
+        assert!(empty.contains("No settings match your search."), "{empty}");
+    }
+
+    #[test]
+    fn the_settings_page_survives_a_narrow_terminal() {
+        let mut state = reader();
+        state.overlay = Overlay::Settings;
+        reader_app::settings_panel::open(&mut state);
+
+        for (width, height) in [(30, 12), (44, 10), (24, 20)] {
+            let rows = render(&mut state, &CommandBar::default(), width, height);
+            assert_eq!(rows.len(), height as usize, "{width}x{height}");
+            assert!(
+                rows.iter().all(|row| row.chars().count() <= width as usize),
+                "nothing overflows at {width}x{height}: {rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_narrow_terminal_keeps_the_header_and_the_footer_apart() {
+        let mut state = reader();
+        for width in [20, 30, 44] {
+            let rows = render(&mut state, &CommandBar::default(), width, 10);
+            assert_eq!(rows.len(), 10);
+            assert!(
+                rows[0].starts_with('╭'),
+                "width {width} header was {:?}",
+                rows[0]
+            );
+            assert!(
+                rows[rows.len() - 2].starts_with('╰'),
+                "width {width} closing rule was {:?}",
+                rows[rows.len() - 2]
+            );
+            let metadata = rows.last().expect("a metadata row");
+            assert!(
+                !metadata.starts_with('╰'),
+                "the metadata row must not overwrite the rule: {metadata:?}"
+            );
+        }
     }
 
     #[test]

@@ -10,22 +10,22 @@
 use std::io;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
-};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use reader_app::{CommandContext, ReaderState, persist_pace};
 use reader_core::WriteThrottle;
 use reader_storage::Storage;
 
 use crate::actions::{apply, current_mode};
 use crate::frame::{CommandBar, draw, footer_height};
-use crate::input::{Action, SCROLL_STEP, map_key};
+use crate::input::map_key;
+use crate::pointer::{PointerState, map_mouse};
 
 /// How long to wait for an event before redrawing anyway.
 const TICK: Duration = Duration::from_millis(250);
@@ -196,6 +196,8 @@ fn event_loop(
     // putting the database in the reader's hot loop.
     let mut position_writes: WriteThrottle<(String, reader_core::ReadingPosition)> =
         WriteThrottle::default();
+    // A scrollbar drag spans several events, so the grab survives between them.
+    let pointer = &mut PointerState::default();
 
     while !state.should_quit {
         // The footer shows a running Toggl timer, counted locally from its start
@@ -224,7 +226,7 @@ fn event_loop(
         if !event::poll(TICK)? {
             continue;
         }
-        let layout = state.layout(footer_height(command_bar));
+        let layout = state.layout(footer_height(state, command_bar));
         let context = CommandContext {
             now: now_millis(),
             content_width: layout.content_width,
@@ -237,11 +239,15 @@ fn event_loop(
                 apply(action, state, storage, command_bar, context)?;
             }
             Event::Mouse(mouse) => {
-                let action = match mouse.kind {
-                    MouseEventKind::ScrollDown => Action::ScrollDown(SCROLL_STEP * 3),
-                    MouseEventKind::ScrollUp => Action::ScrollUp(SCROLL_STEP * 3),
-                    _ => Action::Ignore,
+                // The frame the pointer landed on is the one just drawn, so it
+                // is hit-tested against the same geometry.
+                let area = Rect {
+                    x: 0,
+                    y: 0,
+                    width: state.viewport.width,
+                    height: state.viewport.height,
                 };
+                let action = map_mouse(mouse, area, state, command_bar, &overlay_entries, pointer);
                 apply(action, state, storage, command_bar, context)?;
             }
             Event::Resize(width, height) => {

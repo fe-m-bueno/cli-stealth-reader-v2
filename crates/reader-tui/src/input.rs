@@ -55,6 +55,13 @@ pub enum Action {
     OverlayEnd,
     /// Act on the selected overlay entry.
     OverlayConfirm,
+    /// Move the overlay selection to a row a pointer landed on.
+    ///
+    /// Clicking selects rather than confirms — except on a foldable group, where
+    /// the fold is the whole interaction.
+    PointerSelect(usize),
+    /// Scroll to an exact offset, as a scrollbar drag asks for.
+    ScrollTo(usize),
     /// Delete the selected overlay entry, where that is meaningful.
     OverlayDelete,
     /// Cycle the library sort key, in the library overlay.
@@ -73,9 +80,13 @@ pub enum Action {
     ToggleAllGroups,
     /// Change the setting under the cursor, previewing it.
     ChangeSetting,
+    /// Tick or untick the file under the cursor in the picker.
+    TogglePickerSelection,
     /// Move between tabs, in overlays that have them.
     NextTab,
     PreviousTab,
+    /// Open a tab directly, as clicking one asks for.
+    SelectSettingsTab(reader_core::SettingsTab),
     ToggleFocusMode,
     CycleRenderMode,
     CycleCodeDensity,
@@ -164,9 +175,12 @@ fn map_overlay_key(key: KeyEvent, overlay: Overlay, searching: bool) -> Action {
         KeyCode::Up | KeyCode::Char('k') => Action::OverlayUp,
         KeyCode::Down | KeyCode::Char('j') => Action::OverlayDown,
         KeyCode::PageUp | KeyCode::Char('b') => Action::OverlayPageUp,
-        // In settings, space changes the value under the cursor; everywhere else
-        // it pages, since there is nothing to change.
+        // Space acts on the row wherever there is something to act on: it
+        // changes a setting, ticks a file, folds a group. Only where the row has
+        // nothing to toggle does it fall back to paging.
         KeyCode::Char(' ') if overlay == Overlay::Settings => Action::ChangeSetting,
+        KeyCode::Char(' ') if overlay == Overlay::FilePicker => Action::TogglePickerSelection,
+        KeyCode::Char(' ') if overlay == Overlay::Keys => Action::OverlayConfirm,
         KeyCode::PageDown | KeyCode::Char(' ') => Action::OverlayPageDown,
         KeyCode::Home | KeyCode::Char('g') => Action::OverlayHome,
         KeyCode::End | KeyCode::Char('G') => Action::OverlayEnd,
