@@ -57,6 +57,7 @@ pub fn apply(
             | Action::OverlayHome
             | Action::OverlayEnd
             | Action::OverlayConfirm
+            | Action::PointerSelect(_)
             | Action::OverlayDelete
             | Action::CycleLibrarySort
             | Action::ReverseLibrarySort
@@ -66,8 +67,10 @@ pub fn apply(
             | Action::OverlaySearchBackspace
             | Action::ToggleAllGroups
             | Action::ChangeSetting
+            | Action::TogglePickerSelection
             | Action::NextTab
             | Action::PreviousTab
+            | Action::SelectSettingsTab(_)
             | Action::SubmitCommand
             | Action::OpenColorSchemes
             | Action::OpenThemes
@@ -88,6 +91,10 @@ pub fn apply(
         }
         Action::ScrollUp(step) => {
             state.block_offset = state.block_offset.saturating_sub(step);
+        }
+        Action::ScrollTo(offset) => {
+            let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
+            state.block_offset = offset.min(max_offset);
         }
         Action::PageDown => {
             state.push_nav_history();
@@ -207,6 +214,16 @@ pub fn apply(
         Action::OverlayHome => state.overlay_cursor = 0,
         Action::OverlayEnd => state.overlay_cursor = usize::MAX,
         Action::OverlayConfirm => confirm_overlay(state, storage, context)?,
+        Action::PointerSelect(index) => {
+            state.overlay_cursor = index;
+            // A group heading has nothing to select: folding it is the point.
+            if state.overlay == Overlay::Keys {
+                let rows = reader_app::shortcuts_panel::rows(state);
+                if let Some(row) = rows.get(index).cloned() {
+                    reader_app::shortcuts_panel::toggle(state, &row);
+                }
+            }
+        }
         Action::OverlayDelete => delete_overlay_entry(state, storage, context)?,
         Action::BeginOverlaySearch => {
             state.overlay_search.active = true;
@@ -243,12 +260,35 @@ pub fn apply(
                 state.overlay_cursor = 0;
             }
         }
+        Action::SelectSettingsTab(tab) => {
+            if state.overlay == Overlay::Settings && state.settings_tab != tab {
+                state.settings_tab = tab;
+                state.overlay_search.reset();
+                state.overlay_cursor = 0;
+            }
+        }
         Action::ChangeSetting => {
             if state.overlay == Overlay::Settings {
                 let cursor = state.overlay_cursor;
                 if let Some(field) = reader_app::settings_panel::change(state, cursor) {
                     state.status = format!("{}: {}", field.label(), field.value(&state.settings));
                 }
+            }
+        }
+        Action::TogglePickerSelection => {
+            if state.overlay == Overlay::FilePicker
+                && let Some(index) = visible_entries(state, storage, context.now)
+                    .get(state.overlay_cursor)
+                    .and_then(reader_app::OverlayEntry::index)
+            {
+                if !state.picker_selected.remove(&index) {
+                    state.picker_selected.insert(index);
+                }
+                state.status = match state.picker_selected.len() {
+                    0 => "Nothing selected.".to_owned(),
+                    1 => "1 file selected · Enter imports".to_owned(),
+                    count => format!("{count} files selected · Enter imports"),
+                };
             }
         }
         Action::CycleLibrarySort => {
@@ -463,15 +503,7 @@ fn confirm_overlay(
                 )?;
             }
         }
-        Overlay::FilePicker => {
-            if let Some(discovery) = entry
-                .index()
-                .and_then(|index| state.discoveries.get(index).cloned())
-            {
-                close_overlay(state);
-                let _ = reader_app::import_and_open(state, storage, &discovery.path, context);
-            }
-        }
+        Overlay::FilePicker => import_picked(state, storage, entry.index(), context),
         // Folding a group keeps the panel open; that is the whole interaction.
         Overlay::Keys => {
             let rows = reader_app::shortcuts_panel::rows(state);
@@ -496,6 +528,60 @@ fn confirm_overlay(
         Overlay::Diagnostics | Overlay::Help | Overlay::None => close_overlay(state),
     }
     Ok(())
+}
+
+/// Import the ticked files, or the row under the cursor when nothing is ticked.
+///
+/// The last book that imported cleanly is the one left open. A file that fails
+/// is named and the picker stays where it was, so the reader can retry or pick
+/// something else without rebuilding the selection.
+fn import_picked(
+    state: &mut ReaderState,
+    storage: &mut Storage,
+    cursor_index: Option<usize>,
+    context: CommandContext,
+) {
+    let chosen: Vec<usize> = if state.picker_selected.is_empty() {
+        cursor_index.into_iter().collect()
+    } else {
+        state.picker_selected.iter().copied().collect()
+    };
+    let paths: Vec<_> = chosen
+        .iter()
+        .filter_map(|index| state.discoveries.get(*index).cloned())
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+
+    let mut imported = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for discovery in &paths {
+        match reader_app::import_book(state, storage, &discovery.path, context) {
+            Ok(true) => imported += 1,
+            Ok(false) | Err(_) => failed.push(discovery.file_name.clone()),
+        }
+    }
+
+    if failed.is_empty() {
+        state.picker_selected.clear();
+        close_overlay(state);
+        if imported > 1 {
+            state.status = format!("Imported {imported} books.");
+        }
+        return;
+    }
+
+    // Something failed: keep the picker, and say exactly what did not import.
+    state.overlay = Overlay::FilePicker;
+    state.status = if imported == 0 {
+        format!("Could not import {}.", failed.join(", "))
+    } else {
+        format!(
+            "Imported {imported}; could not import {}.",
+            failed.join(", ")
+        )
+    };
 }
 
 /// Close the overlay and forget what was filtering it.

@@ -40,15 +40,12 @@ impl Overlay {
         match self {
             Self::None => OverlayLayout::None,
             Self::Help => OverlayLayout::FullPage,
-            Self::Settings | Self::Keys | Self::Diagnostics | Self::FilePicker => {
+            Self::Settings | Self::Keys | Self::Diagnostics | Self::FilePicker | Self::Books => {
                 OverlayLayout::Modal
             }
-            Self::Chapters
-            | Self::Books
-            | Self::Bookmarks
-            | Self::Notes
-            | Self::ColorSchemes
-            | Self::Themes => OverlayLayout::Side,
+            Self::Chapters | Self::Bookmarks | Self::Notes | Self::ColorSchemes | Self::Themes => {
+                OverlayLayout::Side
+            }
         }
     }
 
@@ -145,6 +142,11 @@ pub struct ReaderState {
     /// Library root currently being browsed.
     pub library_directory: std::path::PathBuf,
     pub discoveries: Vec<reader_formats::Discovery>,
+    /// Files ticked in the picker, as indices into `discoveries`.
+    ///
+    /// Indices rather than paths, because the picker's rows already point at
+    /// their source item and a filtered list must still tick the right file.
+    pub picker_selected: std::collections::BTreeSet<usize>,
 
     /// Lines an integration wants shown in the diagnostics overlay.
     pub integration_report: Vec<String>,
@@ -237,6 +239,7 @@ impl ReaderState {
             books_tag_filter: None,
             library_directory: std::env::current_dir().unwrap_or_default(),
             discoveries: Vec::new(),
+            picker_selected: std::collections::BTreeSet::new(),
             integration_report: Vec::new(),
             command_prefill: None,
             should_quit: false,

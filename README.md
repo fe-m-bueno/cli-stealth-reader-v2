@@ -95,6 +95,25 @@ stealth-reader [--resume] <FILE>
 Se um arquivo for informado junto com `--resume`, o arquivo explícito tem
 precedência.
 
+### O que acontece ao iniciar
+
+Sem argumentos, o leitor **nunca reabre um livro sozinho** — ele oferece uma
+escolha. Na ordem:
+
+1. um arquivo passado na linha de comando é importado e aberto;
+2. com `--resume`, o livro mais recente reabre na posição salva;
+3. caso contrário, o diretório configurado em `/librarydir` é varrido
+   recursivamente e:
+   - se a biblioteca já tem livros, o picker da biblioteca abre para você
+     escolher;
+   - se ela está vazia mas há EPUB/CBZ/PDF no diretório, o file picker abre com
+     os arquivos encontrados;
+   - se não há nada, o rodapé explica como apontar para outro diretório.
+
+Abrir automaticamente o último livro é comportamento **opt-in** via `--resume`,
+e não o padrão: uma sessão que começa no lugar errado custa mais do que uma
+tecla a mais.
+
 ### Primeira sessão
 
 1. Inicie `stealth-reader`.
@@ -315,6 +334,26 @@ original no disco.
 /mouse [on|off]
 /settings
 ```
+
+#### Mouse e seleção de texto
+
+A captura de mouse vem **desligada** por padrão, e é assim de propósito: com ela
+desligada o terminal continua dono do ponteiro, então arrastar o cursor sobre o
+texto seleciona e copia como em qualquer outra saída de terminal. Só a roda
+chega ao leitor, e ela rola a página normalmente.
+
+Com `/mouse on` o leitor passa a receber cliques e arrastos:
+
+- clicar na trilha da barra de rolagem salta para o ponto correspondente do
+  capítulo, e arrastar o cursor da barra move a leitura continuamente;
+- clicar em uma linha de um overlay move a seleção para ela; nos grupos do painel
+  de atalhos, clicar no cabeçalho dobra ou desdobra o grupo;
+- clicar em `[×]` fecha o modal e clicar na linha de busca começa a filtrar.
+
+Qualquer arrasto fora da barra de rolagem continua sendo do terminal. Nos
+terminais que reservam o arrasto simples para a aplicação (a maioria), a seleção
+nativa segue disponível com **Shift+arrasto** enquanto a captura está ligada;
+onde o terminal não oferece esse atalho, `/mouse off` devolve a seleção normal.
 
 Color schemes:
 

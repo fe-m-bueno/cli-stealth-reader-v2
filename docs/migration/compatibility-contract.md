@@ -54,7 +54,21 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Render cache | Done | chapter and focus line caches keyed by rendering inputs; Ratatui diffs changed cells between frames |
 | Layout rendering | Done | geometry and frame composition, asserted from buffers |
 | Toggl | Done | `reader-integrations`, 46 tests against recorded responses |
-| Startup CLI | Done | `--resume`, an optional file, and the argument tests |
+| Startup CLI | Done | `reader-app/src/startup.rs`, launch-level tests over a temporary data directory |
+
+### Startup policy
+
+v1 and v2 agree: a plain launch offers a choice and never reopens a book by
+itself. `reader_app::launch` resolves it in one place — an explicit file wins,
+then `--resume` reopens the latest book at its saved position, then the
+configured library directory is scanned. With books in the library the library
+picker opens; with an empty library but files on disk the file picker opens with
+what was found; with neither, the footer says how to point elsewhere.
+
+The one deliberate change from v1: where v1's empty state listed the discovered
+files and asked for another keypress to open the picker, v2 opens the picker
+directly. The list was already the picker's contents, so the extra step only
+delayed the same screen.
 
 ### Render-cache note
 

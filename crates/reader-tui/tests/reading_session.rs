@@ -6,13 +6,16 @@
 
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use reader_app::{CommandContext, Overlay, ReaderState};
 use reader_core::{AppSettings, RenderMode};
 use reader_storage::{AppPaths, Storage};
-use reader_tui::{CommandBar, apply, current_mode, draw, footer_height, map_key};
+use reader_tui::{
+    CommandBar, PointerState, apply, current_mode, draw, footer_height, map_key, map_mouse,
+};
 
 /// The EPUB fixture the format tests already use.
 fn fixture() -> PathBuf {
@@ -28,6 +31,7 @@ struct Session {
     state: ReaderState,
     storage: Storage,
     command_bar: CommandBar,
+    pointer: PointerState,
     terminal: Terminal<TestBackend>,
     scratch: PathBuf,
 }
@@ -58,13 +62,16 @@ impl Session {
             state,
             storage,
             command_bar: CommandBar::default(),
+            pointer: PointerState::default(),
             terminal,
             scratch,
         }
     }
 
     fn context(&mut self) -> CommandContext {
-        let layout = self.state.layout(footer_height(&self.command_bar));
+        let layout = self
+            .state
+            .layout(footer_height(&self.state, &self.command_bar));
         CommandContext {
             now: 1_700_000_000_000,
             content_width: layout.content_width,
@@ -89,6 +96,39 @@ impl Session {
             context,
         )
         .expect("actions must not fail a session");
+    }
+
+    /// Deliver a mouse event, exactly as the event loop would.
+    fn mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: self.state.viewport.width,
+            height: self.state.viewport.height,
+        };
+        let entries = reader_app::visible_entries(&self.state, &self.storage, 1_700_000_000_000);
+        let action = map_mouse(
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+            area,
+            &mut self.state,
+            &self.command_bar,
+            &entries,
+            &mut self.pointer,
+        );
+        let context = self.context();
+        apply(
+            action,
+            &mut self.state,
+            &mut self.storage,
+            &mut self.command_bar,
+            context,
+        )
+        .expect("pointer actions must not fail a session");
     }
 
     /// Type a command line and run it.
@@ -180,6 +220,353 @@ fn scrolling_and_chapter_keys_move_through_the_book() {
     assert_eq!(session.state.chapter_index, 0);
 }
 
+/// A directory holding copies of `names`, plus a file the reader ignores.
+fn library_with(scratch: &Path, names: &[&str]) -> PathBuf {
+    let root = scratch.join("library");
+    std::fs::create_dir_all(root.join("nested")).expect("a library directory");
+    for (index, name) in names.iter().enumerate() {
+        // Half go in a subfolder, so discovery has to recurse to find them.
+        let target = if index % 2 == 0 {
+            root.join(name)
+        } else {
+            root.join("nested").join(name)
+        };
+        std::fs::copy(fixture().with_file_name(name), &target).expect("a fixture copy");
+    }
+    std::fs::write(root.join("notes.txt"), "not a book").expect("an unsupported file");
+    root
+}
+
+#[test]
+fn the_picker_discovers_recursively_ticks_files_and_imports_the_set() {
+    let mut session = Session::start("picker");
+    let root = library_with(
+        &session.scratch,
+        &["ncx-nested.epub", "front-matter.epub", "comic.cbz"],
+    );
+
+    session.command(&format!("librarydir {}", root.display()));
+    session.command("add");
+
+    assert_eq!(session.state.overlay, Overlay::FilePicker);
+    assert_eq!(
+        session.state.discoveries.len(),
+        3,
+        "recursive discovery, and only supported files: {:?}",
+        session.state.discoveries
+    );
+
+    let screen = session.screen();
+    assert!(screen.contains("Add Books"), "{screen}");
+    assert!(screen.contains("[ ] "), "unticked checkboxes:\n{screen}");
+    assert!(screen.contains("/ to search"), "{screen}");
+    assert!(screen.contains("Space:select"), "{screen}");
+    assert!(
+        !screen.contains("notes.txt"),
+        "an unsupported file is not offered:\n{screen}"
+    );
+
+    // Space ticks the row under the cursor rather than paging.
+    session.press(KeyCode::Char(' '));
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Char(' '));
+    assert_eq!(session.state.picker_selected.len(), 2);
+    let ticked = session.screen();
+    assert!(ticked.contains("[x] "), "{ticked}");
+    assert_eq!(
+        session.state.status, "2 files selected · Enter imports",
+        "the status counts the set"
+    );
+
+    session.press(KeyCode::Enter);
+
+    assert_eq!(session.state.overlay, Overlay::None, "the picker closes");
+    assert_eq!(
+        session.storage.books().expect("the library").len(),
+        3,
+        "the fixture book plus the two imported ones"
+    );
+    assert!(
+        session.state.status.contains("Imported 2 books"),
+        "{}",
+        session.state.status
+    );
+}
+
+#[test]
+fn a_picker_search_narrows_the_rows_without_losing_which_file_is_ticked() {
+    let mut session = Session::start("picker-search");
+    let root = library_with(
+        &session.scratch,
+        &["ncx-nested.epub", "front-matter.epub", "comic.cbz"],
+    );
+    session.command(&format!("librarydir {}", root.display()));
+    session.command("add");
+
+    // Tick the comic, then narrow to something else entirely.
+    let comic = session
+        .state
+        .discoveries
+        .iter()
+        .position(|item| item.file_name.contains("comic"))
+        .expect("the comic is discovered");
+    session.state.picker_selected.insert(comic);
+
+    session.press(KeyCode::Char('/'));
+    for character in "front".chars() {
+        session.press(KeyCode::Char(character));
+    }
+
+    let listed = reader_app::visible_entries(&session.state, &session.storage, 0);
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert!(listed[0].display.contains("front-matter"), "{listed:?}");
+    assert_ne!(
+        listed[0].index(),
+        Some(0),
+        "a narrowed row still points at its own file"
+    );
+
+    // Ticking here adds to the set rather than replacing it.
+    session.press(KeyCode::Enter);
+    assert_eq!(
+        session.state.overlay,
+        Overlay::None,
+        "confirming imports the ticked set"
+    );
+    assert!(
+        session
+            .storage
+            .books()
+            .expect("the library")
+            .iter()
+            .any(|book| book.title.to_lowercase().contains("comic")
+                || book.source_path.contains("comic")),
+        "the file ticked before the search is the one that imported"
+    );
+}
+
+#[test]
+fn a_picker_over_an_empty_directory_says_what_to_do() {
+    let mut session = Session::start("picker-empty");
+    let root = session.scratch.join("empty-library");
+    std::fs::create_dir_all(&root).expect("an empty directory");
+
+    session.command(&format!("librarydir {}", root.display()));
+    session.command("add");
+
+    assert!(session.state.discoveries.is_empty());
+    let screen = session.screen();
+    assert!(
+        screen.contains("No EPUB, CBZ, or PDF files"),
+        "the picker explains itself:\n{screen}"
+    );
+}
+
+#[test]
+fn a_malformed_file_is_named_and_the_picker_stays_open() {
+    let mut session = Session::start("picker-malformed");
+    let root = session.scratch.join("broken-library");
+    std::fs::create_dir_all(&root).expect("a directory");
+    std::fs::write(root.join("broken.epub"), b"not really a zip").expect("a broken book");
+
+    session.command(&format!("librarydir {}", root.display()));
+    session.command("add");
+    session.press(KeyCode::Char(' '));
+    session.press(KeyCode::Enter);
+
+    assert_eq!(
+        session.state.overlay,
+        Overlay::FilePicker,
+        "a failure keeps the picker"
+    );
+    assert!(
+        session.state.status.contains("broken.epub"),
+        "the failure names the file: {}",
+        session.state.status
+    );
+    assert_eq!(
+        session.state.picker_selected.len(),
+        1,
+        "the selection survives so it can be retried"
+    );
+}
+
+#[test]
+fn importing_the_same_file_twice_does_not_duplicate_the_library_row() {
+    let mut session = Session::start("picker-duplicate");
+    let root = library_with(&session.scratch, &["ncx-nested.epub"]);
+
+    session.command(&format!("librarydir {}", root.display()));
+    session.command("add");
+    session.press(KeyCode::Enter);
+    let after_first = session.storage.books().expect("the library").len();
+
+    session.command("add");
+    session.press(KeyCode::Enter);
+
+    assert_eq!(
+        session.storage.books().expect("the library").len(),
+        after_first,
+        "reimporting the same content reuses its row"
+    );
+}
+
+#[test]
+fn dragging_the_scrollbar_moves_the_page_and_saves_the_position() {
+    let mut session = Session::start("scrollbar-drag");
+    // A chapter that fits the screen has no scrollbar to drag.
+    session.terminal = Terminal::new(TestBackend::new(48, 12)).expect("terminal");
+    session.rows();
+
+    let geometry = reader_tui::frame::geometry(
+        Rect {
+            x: 0,
+            y: 0,
+            width: session.state.viewport.width,
+            height: session.state.viewport.height,
+        },
+        &session.state,
+        &session.command_bar,
+    );
+    let column = geometry
+        .scrollbar_column
+        .expect("a scrollable chapter has a scrollbar");
+    let body = geometry.body;
+
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        body.y + body.height - 1,
+    );
+    let jumped = session.state.block_offset;
+    assert!(jumped > 0, "pressing the track should move the page");
+
+    session.mouse(MouseEventKind::Drag(MouseButton::Left), column, body.y);
+    assert_eq!(
+        session.state.block_offset, 0,
+        "dragging the thumb back to the top returns to the start"
+    );
+
+    session.mouse(MouseEventKind::Up(MouseButton::Left), column, body.y);
+    session.mouse(MouseEventKind::Drag(MouseButton::Left), column, body.y + 4);
+    assert_eq!(
+        session.state.block_offset, 0,
+        "a drag after the release is no longer the reader's"
+    );
+
+    // The same persistence path the keyboard uses runs after a pointer scroll.
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        body.y + body.height - 1,
+    );
+    let offset = session.state.block_offset;
+    let position = reader_core::ReadingPosition {
+        chapter_index: session.state.chapter_index,
+        chapter_progress: 0.0,
+        book_progress: 0.0,
+        block_offset: offset,
+    };
+    let book_id = session.state.book_id().expect("a book").to_owned();
+    session
+        .storage
+        .save_position(&book_id, position, 1_700_000_000_000)
+        .expect("the position is written");
+    assert_eq!(
+        session
+            .storage
+            .position(&book_id)
+            .expect("read back")
+            .expect("a saved position")
+            .block_offset,
+        offset
+    );
+}
+
+#[test]
+fn clicking_the_shortcut_modal_folds_a_group_selects_a_row_and_closes_it() {
+    let mut session = Session::start("shortcuts-pointer");
+    session.press(KeyCode::Char('?'));
+    session.rows();
+
+    let body = reader_tui::frame::geometry(
+        Rect {
+            x: 0,
+            y: 0,
+            width: session.state.viewport.width,
+            height: session.state.viewport.height,
+        },
+        &session.state,
+        &session.command_bar,
+    )
+    .body;
+    let modal = reader_tui::modals::modal_geometry(body);
+
+    // The second row is the first Essentials binding; clicking selects it.
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        modal.area.x + 4,
+        modal.entries_y + 1,
+    );
+    assert_eq!(session.state.overlay_cursor, 1);
+    assert_eq!(session.state.overlay, Overlay::Keys, "a row does not close");
+
+    // Clicking the Essentials heading folds it.
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        modal.area.x + 4,
+        modal.entries_y,
+    );
+    let folded = session.screen();
+    assert!(folded.contains("› Essentials"), "{folded}");
+    assert!(!folded.contains("Focus command bar"), "{folded}");
+
+    // Clicking the search row starts a search.
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        modal.area.x + 4,
+        modal.area.y + 1,
+    );
+    assert!(session.state.overlay_search.active);
+
+    // And the close control closes the modal.
+    session.mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        modal.area.x + modal.area.width - 2,
+        modal.area.y,
+    );
+    assert_eq!(session.state.overlay, Overlay::None);
+}
+
+#[test]
+fn the_reading_column_never_intercepts_a_plain_drag() {
+    // Mouse capture is off by default, so the terminal keeps its own selection
+    // and the reader sees no pointer events at all. With capture on the reader
+    // does see them, and it still leaves every drag outside the scrollbar to the
+    // terminal — which is what keeps Shift-drag selection working where the
+    // terminal offers it.
+    let mut session = Session::start("selection");
+    assert!(
+        !session.state.settings.mouse_capture,
+        "capture stays off unless the reader asks for it"
+    );
+
+    session.state.settings.mouse_capture = true;
+    session.terminal = Terminal::new(TestBackend::new(48, 12)).expect("terminal");
+    session.rows();
+    let before = session.state.block_offset;
+
+    session.mouse(MouseEventKind::Down(MouseButton::Left), 10, 4);
+    session.mouse(MouseEventKind::Drag(MouseButton::Left), 24, 7);
+    session.mouse(MouseEventKind::Up(MouseButton::Left), 24, 7);
+
+    assert_eq!(
+        session.state.block_offset, before,
+        "a drag across the text belongs to the terminal, not the reader"
+    );
+    assert_eq!(session.state.overlay, Overlay::None);
+}
+
 #[test]
 fn a_typed_command_runs_and_reports_in_the_footer() {
     let mut session = Session::start("command");
@@ -242,6 +629,7 @@ fn searching_moves_to_a_match_and_cycles_through_them() {
     let mut session = Session::start("search");
 
     session.command("search -g harbour");
+    session.terminal = Terminal::new(TestBackend::new(140, 24)).expect("terminal");
     let found = session.screen();
     assert!(
         found.contains("match(es) in book"),
@@ -447,21 +835,30 @@ fn the_shortcut_panel_folds_a_group_and_keeps_the_rest() {
     session.press(KeyCode::Char('?'));
     assert_eq!(session.state.overlay, Overlay::Keys);
 
-    let expanded = session.screen();
-    assert!(expanded.contains("▾ Navigation"), "{expanded}");
-    assert!(expanded.contains("Scroll up"), "{expanded}");
+    // Essentials is open when the panel appears; the rest start folded.
+    let opened = session.screen();
+    assert!(opened.contains("◆ Essentials"), "{opened}");
+    assert!(opened.contains("Focus command bar"), "{opened}");
+    assert!(opened.contains("› Navigation"), "{opened}");
 
     // The cursor starts on the first header, so confirming folds it.
     session.press(KeyCode::Enter);
     let folded = session.screen();
 
     assert_eq!(session.state.overlay, Overlay::Keys, "the panel stays open");
-    assert!(folded.contains("▸ Navigation"), "{folded}");
-    assert!(!folded.contains("Scroll up"), "{folded}");
+    assert!(folded.contains("› Essentials"), "{folded}");
+    assert!(!folded.contains("Focus command bar"), "{folded}");
     assert!(
         folded.contains("Commands"),
         "the other groups remain:\n{folded}"
     );
+
+    // And unfolding a different group brings its bindings back.
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Enter);
+    let navigation = session.screen();
+    assert!(navigation.contains("◆ Navigation"), "{navigation}");
+    assert!(navigation.contains("Scroll up"), "{navigation}");
 }
 
 #[test]
@@ -471,11 +868,20 @@ fn the_settings_panel_previews_a_change_and_can_move_between_tabs() {
     assert_eq!(session.state.overlay, Overlay::Settings);
 
     let opened = session.screen();
-    assert!(opened.contains("[Themes]"), "{opened}");
+    assert!(opened.contains("Reader settings"), "{opened}");
+    assert!(opened.contains("Themes"), "{opened}");
     assert!(opened.contains("Colorscheme"), "{opened}");
+    assert!(
+        opened.contains("Search settings..."),
+        "the search row is visible:\n{opened}"
+    );
+    assert!(opened.contains("Preview"), "{opened}");
+    assert!(
+        opened.contains("Enter save") && opened.contains("Esc cancel"),
+        "the footer explains save and cancel:\n{opened}"
+    );
 
-    // Move off the tab strip onto the first setting and change it with space.
-    session.press(KeyCode::Down);
+    // The cursor starts on the first setting, so space changes it.
     session.press(KeyCode::Char(' '));
 
     assert_eq!(
@@ -490,8 +896,12 @@ fn the_settings_panel_previews_a_change_and_can_move_between_tabs() {
 
     session.press(KeyCode::Right);
     let reading_tab = session.screen();
-    assert!(reading_tab.contains("[Reading]"), "{reading_tab}");
+    assert!(reading_tab.contains("Reading"), "{reading_tab}");
     assert!(reading_tab.contains("Code density"), "{reading_tab}");
+    assert!(
+        !reading_tab.contains("› Colorscheme"),
+        "only the open tab's controls show:\n{reading_tab}"
+    );
 }
 
 #[test]
@@ -545,6 +955,9 @@ fn a_toggl_command_without_a_connection_says_what_to_do() {
 
     session.command("toggl auth");
 
+    // The closing rule gives the key hints their full width first, so a long
+    // instruction needs a wide terminal to survive intact.
+    session.terminal = Terminal::new(TestBackend::new(140, 24)).expect("terminal");
     let screen = session.screen();
     assert!(
         screen.contains("focus.toggl.com/settings"),

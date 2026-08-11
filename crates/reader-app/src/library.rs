@@ -44,6 +44,9 @@ pub fn refresh_discoveries(
 pub fn open_file_picker(state: &mut ReaderState, items: Vec<Discovery>, status: String) {
     state.overlay = Overlay::FilePicker;
     state.overlay_cursor = 0;
+    state.overlay_search.reset();
+    // The ticks belong to the list that was on screen; a new list starts blank.
+    state.picker_selected.clear();
     state.discoveries = items;
     state.status = status;
 }

@@ -15,12 +15,30 @@ use crate::state::{Overlay, ReaderState};
 pub struct OverlayEntry {
     /// The text shown in the list.
     pub display: String,
+    /// A second column, right-aligned against the row's far edge: a key binding,
+    /// a progress tag, a location. Empty when the row is a single column.
+    pub detail: String,
     /// The text a query is matched against, which may include fields the row
     /// does not show — an author, a tag, a location.
     pub search: String,
     /// What acting on this row refers to: an index into the source list, or an
     /// identifier for rows that have one.
     pub target: EntryTarget,
+    /// How the row should read on screen.
+    pub style: EntryStyle,
+}
+
+/// How much weight a row carries in the list.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EntryStyle {
+    /// An ordinary, selectable row.
+    #[default]
+    Normal,
+    /// A group heading: emphasised, and folded rather than opened.
+    Header,
+    /// On screen but not yet the reader's — a file found on disk, an
+    /// informational line.
+    Muted,
 }
 
 /// What confirming or deleting a row acts on.
@@ -38,8 +56,10 @@ impl OverlayEntry {
     fn new(display: impl Into<String>, search: impl Into<String>, target: EntryTarget) -> Self {
         Self {
             display: display.into(),
+            detail: String::new(),
             search: search.into(),
             target,
+            style: EntryStyle::Normal,
         }
     }
 
@@ -47,6 +67,20 @@ impl OverlayEntry {
     fn plain(display: impl Into<String>, target: EntryTarget) -> Self {
         let display = display.into();
         Self::new(display.clone(), display, target)
+    }
+
+    /// Give the row a right-aligned second column.
+    #[must_use]
+    fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+
+    /// Give the row a weight other than [`EntryStyle::Normal`].
+    #[must_use]
+    fn with_style(mut self, style: EntryStyle) -> Self {
+        self.style = style;
+        self
     }
 
     /// The index this row refers to, when it refers to one.
@@ -227,12 +261,28 @@ pub fn entries(state: &ReaderState, storage: &Storage, now: i64) -> Vec<OverlayE
             .map(|(index, theme)| OverlayEntry::plain(theme.label(), EntryTarget::Index(index)))
             .collect(),
 
+        // A checkbox rather than a highlight: the cursor says where you are, the
+        // box says what will be imported, and those are different questions.
         Overlay::FilePicker => state
             .discoveries
             .iter()
             .enumerate()
             .map(|(index, discovery)| {
-                OverlayEntry::plain(discovery.file_name.clone(), EntryTarget::Index(index))
+                let ticked = state.picker_selected.contains(&index);
+                OverlayEntry::new(
+                    format!(
+                        "{} {}",
+                        if ticked { "[x]" } else { "[ ]" },
+                        discovery.file_name
+                    ),
+                    discovery.file_name.clone(),
+                    EntryTarget::Index(index),
+                )
+                .with_style(if ticked {
+                    EntryStyle::Normal
+                } else {
+                    EntryStyle::Muted
+                })
             })
             .collect(),
 
@@ -259,7 +309,8 @@ pub fn entries(state: &ReaderState, storage: &Storage, now: i64) -> Vec<OverlayE
             .into_iter()
             .enumerate()
             .map(|(index, row)| {
-                OverlayEntry::new(row.display, row.search, EntryTarget::Index(index))
+                OverlayEntry::new(row.label, row.search, EntryTarget::Index(index))
+                    .with_detail(row.value)
             })
             .collect(),
 
@@ -267,7 +318,13 @@ pub fn entries(state: &ReaderState, storage: &Storage, now: i64) -> Vec<OverlayE
             .into_iter()
             .enumerate()
             .map(|(index, row)| {
-                OverlayEntry::new(row.display, row.search, EntryTarget::Index(index))
+                let style = match row.kind {
+                    crate::shortcuts_panel::RowKind::Header(_) => EntryStyle::Header,
+                    crate::shortcuts_panel::RowKind::Binding => EntryStyle::Normal,
+                };
+                OverlayEntry::new(row.label, row.search, EntryTarget::Index(index))
+                    .with_detail(row.key)
+                    .with_style(style)
             })
             .collect(),
 
@@ -287,10 +344,22 @@ pub fn filter(rows: Vec<OverlayEntry>, query: &str) -> Vec<OverlayEntry> {
     fuzzy::filter(query.trim(), rows, |entry| entry.search.as_str())
 }
 
+/// Overlays that apply the query while building their rows.
+///
+/// Both keep matches under their own headings or tabs, which a rank-ordered
+/// generic filter would scramble, so filtering them twice would be wrong.
+const fn filters_itself(overlay: Overlay) -> bool {
+    matches!(overlay, Overlay::Keys | Overlay::Settings)
+}
+
 /// The rows the overlay should show right now.
 #[must_use]
 pub fn visible_entries(state: &ReaderState, storage: &Storage, now: i64) -> Vec<OverlayEntry> {
-    filter(entries(state, storage, now), state.overlay_search.query())
+    let rows = entries(state, storage, now);
+    if filters_itself(state.overlay) {
+        return rows;
+    }
+    filter(rows, state.overlay_search.query())
 }
 
 #[cfg(test)]

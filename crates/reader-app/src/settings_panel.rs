@@ -17,7 +17,9 @@ use crate::state::ReaderState;
 /// One line of the panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingRow {
-    pub display: String,
+    pub label: &'static str,
+    pub value: String,
+    pub description: &'static str,
     pub search: String,
     pub field: SettingField,
 }
@@ -66,6 +68,24 @@ impl SettingField {
             Self::LineSpacing => "Line spacing",
             Self::ProgressVisibility => "Progress display",
             Self::MouseCapture => "Mouse capture",
+        }
+    }
+
+    /// What the setting does, shown under the row the cursor is on.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::ColorScheme => "Accent color palette used across the reader.",
+            Self::Appearance => "Dark, light, colorblind-friendly, or ANSI appearance.",
+            Self::RenderMode => "Plain reading or code-like stealth rendering.",
+            Self::CodeLanguage => "Which language the stealth rendering imitates.",
+            Self::CodeDensity => "How compact stealth code rendering should be.",
+            Self::PlainHighlight => "Highlight dialogue while using plain reading mode.",
+            Self::FontScale => "Wrap text earlier to simulate a larger terminal font.",
+            Self::MarginSize => "Add equal horizontal margins around the reading column.",
+            Self::LineSpacing => "Choose compact, normal, or relaxed block spacing.",
+            Self::ProgressVisibility => "Choose which footer progress indicator is visible.",
+            Self::MouseCapture => "Enable app mouse mode for scrollbar dragging.",
         }
     }
 
@@ -164,45 +184,31 @@ fn next_value(values: &[f64], current: f64) -> f64 {
     values[(position + 1) % values.len()]
 }
 
-/// The rows of the active tab.
+/// The rows of the active tab, narrowed by the panel's own query.
+///
+/// The query is applied here rather than by the generic overlay filter so a
+/// search can match a description the row does not show, exactly as v1's
+/// `filteredSettingsItems` did.
 #[must_use]
 pub fn rows(state: &ReaderState) -> Vec<SettingRow> {
     let tab = state.settings_tab;
-    let mut rows = vec![SettingRow {
-        display: format!(
-            "  {}",
-            SettingsTab::ALL
-                .iter()
-                .map(|candidate| {
-                    if *candidate == tab {
-                        format!("[{}]", candidate.label())
-                    } else {
-                        format!(" {} ", candidate.label())
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        // The tab strip is a heading, not something a query should surface.
-        search: String::new(),
-        field: SettingField::ColorScheme,
-    }];
-
-    rows.extend(
-        SettingField::ALL
-            .into_iter()
-            .filter(|field| field.tab() == tab)
-            .map(|field| SettingRow {
-                display: format!("  {:<20} {}", field.label(), field.value(&state.settings)),
-                search: format!("{} {}", field.label(), field.value(&state.settings)),
+    let query = state.overlay_search.query().to_lowercase();
+    SettingField::ALL
+        .into_iter()
+        .filter(|field| field.tab() == tab)
+        .map(|field| {
+            let value = field.value(&state.settings);
+            SettingRow {
+                label: field.label(),
+                search: format!("{} {} {}", field.label(), value, field.description()),
+                value,
+                description: field.description(),
                 field,
-            }),
-    );
-    rows
+            }
+        })
+        .filter(|row| query.is_empty() || row.search.to_lowercase().contains(&query))
+        .collect()
 }
-
-/// Which row index the tab strip occupies; it cannot be changed.
-pub const TAB_STRIP_ROW: usize = 0;
 
 /// Open the panel, remembering what to restore if it is cancelled.
 pub fn open(state: &mut ReaderState) {
@@ -211,6 +217,9 @@ pub fn open(state: &mut ReaderState) {
 }
 
 /// Move to the next or previous tab.
+///
+/// A tab change drops the query, because a term that matched here rarely
+/// matches there and an empty page reads as a bug.
 pub fn cycle_tab(state: &mut ReaderState, forward: bool) {
     let tabs = SettingsTab::ALL;
     let position = tabs
@@ -223,17 +232,15 @@ pub fn cycle_tab(state: &mut ReaderState, forward: bool) {
         (position + tabs.len() - 1) % tabs.len()
     };
     state.settings_tab = tabs[next];
+    state.overlay_search.reset();
 }
 
 /// Change the setting on `row`, previewing it immediately.
 ///
-/// Returns whether anything changed — the tab strip is not a setting.
+/// Returns the field that changed, or nothing when the cursor is past the end of
+/// a narrowed list.
 pub fn change(state: &mut ReaderState, row_index: usize) -> Option<SettingField> {
-    let rows = rows(state);
-    if row_index == TAB_STRIP_ROW {
-        return None;
-    }
-    let field = rows.get(row_index)?.field;
+    let field = rows(state).get(row_index)?.field;
     let mut settings = state.settings;
     field.cycle(&mut settings);
     state.settings = settings;
@@ -262,7 +269,7 @@ mod tests {
         RenderMode, SettingsTab,
     };
 
-    use super::{SettingField, TAB_STRIP_ROW, cancel, change, cycle_tab, open, rows, save};
+    use super::{SettingField, cancel, change, cycle_tab, open, rows, save};
     use crate::state::ReaderState;
 
     fn reader() -> ReaderState {
@@ -271,12 +278,8 @@ mod tests {
         state
     }
 
-    fn labels(state: &ReaderState) -> Vec<String> {
-        rows(state)
-            .into_iter()
-            .skip(1)
-            .map(|row| row.display.trim().to_owned())
-            .collect()
+    fn labels(state: &ReaderState) -> Vec<&'static str> {
+        rows(state).into_iter().map(|row| row.label).collect()
     }
 
     #[test]
@@ -304,13 +307,21 @@ mod tests {
     }
 
     #[test]
-    fn the_tab_strip_marks_the_active_tab_and_is_not_a_setting() {
+    fn a_row_carries_its_label_value_and_description() {
+        let state = reader();
+        let row = &rows(&state)[0];
+        assert_eq!(row.label, "Colorscheme");
+        assert_eq!(row.value, state.settings.theme_id.label());
+        assert!(row.description.contains("palette"), "{row:?}");
+        assert!(row.search.contains("Colorscheme"), "{row:?}");
+    }
+
+    #[test]
+    fn a_cursor_past_the_end_of_a_narrowed_list_changes_nothing() {
         let mut state = reader();
-        let strip = &rows(&state)[TAB_STRIP_ROW];
-        assert!(strip.display.contains("[Themes]"), "{}", strip.display);
-        assert!(strip.display.contains(" Reading "), "{}", strip.display);
-        assert!(strip.search.is_empty(), "the strip is not searchable");
-        assert_eq!(change(&mut state, TAB_STRIP_ROW), None);
+        state.overlay_search.buffer = "colorscheme".into();
+        assert_eq!(rows(&state).len(), 1);
+        assert_eq!(change(&mut state, 5), None);
     }
 
     #[test]
@@ -318,7 +329,7 @@ mod tests {
         let mut state = reader();
         let before = state.theme.clone();
 
-        let changed = change(&mut state, 1).expect("a setting changed");
+        let changed = change(&mut state, 0).expect("a setting changed");
 
         assert_eq!(changed, SettingField::ColorScheme);
         assert_ne!(state.theme, before, "the preview applies at once");
@@ -331,10 +342,10 @@ mod tests {
         let original = state.settings;
         let original_theme = state.theme.clone();
 
+        change(&mut state, 0);
         change(&mut state, 1);
-        change(&mut state, 2);
         cycle_tab(&mut state, true);
-        change(&mut state, 3);
+        change(&mut state, 2);
         assert_ne!(state.settings, original);
 
         cancel(&mut state);
@@ -347,7 +358,7 @@ mod tests {
     #[test]
     fn saving_keeps_the_preview_and_returns_what_to_persist() {
         let mut state = reader();
-        change(&mut state, 1);
+        change(&mut state, 0);
         let previewed = state.settings;
 
         let saved = save(&mut state);
@@ -440,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_can_be_searched_by_name_or_value() {
+    fn settings_can_be_searched_by_name_value_or_description() {
         let mut state = reader();
         state.settings_tab = SettingsTab::Layout;
         let storage = reader_storage::Storage::open_in_memory().expect("database");
@@ -449,6 +460,27 @@ mod tests {
         state.overlay_search.buffer = "margin".into();
         let found = crate::overlay::visible_entries(&state, &storage, 0);
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].display.contains("Margin"));
+        assert_eq!(found[0].display, "Margin");
+        assert_eq!(found[0].detail, "0 columns", "the value is its own column");
+
+        // A term that only appears in the description still finds the setting.
+        state.overlay_search.buffer = "terminal font".into();
+        let by_description = crate::overlay::visible_entries(&state, &storage, 0);
+        assert_eq!(by_description.len(), 1, "{by_description:?}");
+        assert_eq!(by_description[0].display, "Font scale");
+    }
+
+    #[test]
+    fn moving_between_tabs_drops_the_query() {
+        let mut state = reader();
+        state.overlay_search.buffer = "colorscheme".into();
+        state.overlay_search.active = true;
+
+        cycle_tab(&mut state, true);
+
+        assert_eq!(state.settings_tab, SettingsTab::Reading);
+        assert!(state.overlay_search.buffer.is_empty());
+        assert!(!state.overlay_search.active);
+        assert_eq!(labels(&state).len(), 4, "the whole tab is visible again");
     }
 }

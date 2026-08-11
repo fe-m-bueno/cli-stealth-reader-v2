@@ -12,14 +12,16 @@ pub mod overlay;
 pub mod render_cache;
 pub mod settings_panel;
 pub mod shortcuts_panel;
+pub mod startup;
 pub mod state;
 pub mod toggl;
 
 pub use executor::{
-    CommandContext, ExecutionError, apply_search_hit, execute_command, import_and_open, open_book,
-    persist_pace,
+    CommandContext, ExecutionError, apply_search_hit, execute_command, import_and_open,
+    import_book, open_book, persist_pace,
 };
 pub use layout::{OverlayLayout, Viewport, ViewportLayout, compute_layout};
-pub use overlay::{EntryTarget, OverlayEntry, OverlaySearch, visible_entries};
+pub use overlay::{EntryStyle, EntryTarget, OverlayEntry, OverlaySearch, visible_entries};
 pub use render_cache::ChapterRenderCache;
+pub use startup::{LaunchOptions, launch};
 pub use state::{MAX_NAV_HISTORY, NavEntry, Overlay, ReaderState, SearchHit, SearchState};
