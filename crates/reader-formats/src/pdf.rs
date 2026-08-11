@@ -21,40 +21,36 @@ use crate::ids::{hash_bytes, short_book_id};
 
 /// Split extracted page text into paragraphs on blank lines, joining the lines
 /// within each paragraph back into a single run.
-fn paragraphs(text: &str) -> Vec<String> {
+fn paragraphs_and_word_count(text: &str) -> (Vec<String>, usize) {
     let mut result: Vec<String> = Vec::new();
-    let mut current: Vec<&str> = Vec::new();
-    let mut blank_run = 0usize;
+    let mut current = String::new();
+    let mut word_count = 0usize;
 
     for line in text.lines() {
         if line.trim().is_empty() {
-            blank_run += 1;
             // v1 split on two or more consecutive newlines.
-            if blank_run >= 1 && !current.is_empty() {
-                result.push(
-                    current
-                        .join(" ")
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                );
-                current.clear();
+            if !current.is_empty() {
+                result.push(std::mem::take(&mut current));
             }
             continue;
         }
-        blank_run = 0;
-        current.push(line);
+        for word in line.split_whitespace() {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+            word_count += 1;
+        }
     }
     if !current.is_empty() {
-        result.push(
-            current
-                .join(" ")
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
+        result.push(current);
     }
-    result.into_iter().filter(|item| !item.is_empty()).collect()
+    (result, word_count)
+}
+
+#[cfg(test)]
+fn paragraphs(text: &str) -> Vec<String> {
+    paragraphs_and_word_count(text).0
 }
 
 /// Decode a PDF text string, which is either UTF-16BE with a byte-order mark or
@@ -73,10 +69,7 @@ fn decode_pdf_string(bytes: &[u8]) -> String {
 }
 
 /// The `/Info` dictionary's title and author, when present and non-empty.
-fn document_info(bytes: &[u8]) -> (Option<String>, Option<String>) {
-    let Ok(document) = lopdf::Document::load_mem(bytes) else {
-        return (None, None);
-    };
+fn document_info(document: &lopdf::Document) -> (Option<String>, Option<String>) {
     let info = document
         .trailer
         .get(b"Info")
@@ -100,6 +93,26 @@ fn document_info(bytes: &[u8]) -> (Option<String>, Option<String>) {
     (field(b"Title"), field(b"Author"))
 }
 
+/// Extract page text from an already parsed document so metadata and content
+/// do not each pay the full PDF decoding cost.
+fn extract_pages(document: &lopdf::Document) -> Vec<String> {
+    let mut pages = Vec::with_capacity(document.get_pages().len());
+    let mut page = 1u32;
+    loop {
+        let mut text = String::new();
+        let result = {
+            let mut output = pdf_extract::PlainTextOutput::new(&mut text);
+            pdf_extract::output_doc_page(document, &mut output, page)
+        };
+        if result.is_err() {
+            break;
+        }
+        pages.push(text);
+        page += 1;
+    }
+    pages
+}
+
 /// Import a PDF file.
 pub fn import_pdf(path: &Path) -> Result<CanonicalBook, ImportError> {
     let bytes = std::fs::read(path)?;
@@ -112,8 +125,13 @@ pub fn import_pdf(path: &Path) -> Result<CanonicalBook, ImportError> {
     let import_hash = hash_bytes(&bytes);
     let mut diagnostics: Vec<ImportDiagnostic> = Vec::new();
 
-    let pages = match pdf_extract::extract_text_from_mem_by_pages(&bytes) {
-        Ok(pages) => pages,
+    let document = match lopdf::Document::load_mem(&bytes).and_then(|mut document| {
+        if document.is_encrypted() {
+            document.decrypt("")?;
+        }
+        Ok(document)
+    }) {
+        Ok(document) => document,
         Err(error) => {
             diagnostics.push(ImportDiagnostic {
                 severity: DiagnosticSeverity::Error,
@@ -134,16 +152,22 @@ pub fn import_pdf(path: &Path) -> Result<CanonicalBook, ImportError> {
         }
     };
 
-    let (document_title, document_author) = document_info(&bytes);
-    let title = document_title.unwrap_or_else(|| base_name.clone());
+    let pages = extract_pages(&document);
+    let (document_title, document_author) = document_info(&document);
+    let title = document_title.unwrap_or(base_name);
     let author = document_author.unwrap_or_else(|| "Unknown".to_owned());
 
     let chapters: Vec<CanonicalChapter> = pages
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(index, raw)| {
             let page = index + 1;
             let text = raw.trim();
+            let (paragraphs, word_count) = if text.is_empty() {
+                (Vec::new(), 0)
+            } else {
+                paragraphs_and_word_count(text)
+            };
             let blocks = if text.is_empty() {
                 diagnostics.push(ImportDiagnostic {
                     severity: DiagnosticSeverity::Warning,
@@ -157,7 +181,7 @@ pub fn import_pdf(path: &Path) -> Result<CanonicalBook, ImportError> {
                     text: format!("[Page {page}: no text content]"),
                 }]
             } else {
-                paragraphs(text)
+                paragraphs
                     .into_iter()
                     .enumerate()
                     .map(|(offset, paragraph)| CanonicalBlock::Paragraph {
@@ -172,7 +196,7 @@ pub fn import_pdf(path: &Path) -> Result<CanonicalBook, ImportError> {
                 title: format!("Page {page}"),
                 href: format!("page-{page}"),
                 depth: 0,
-                word_count: text.split_whitespace().count(),
+                word_count,
                 blocks,
             }
         })

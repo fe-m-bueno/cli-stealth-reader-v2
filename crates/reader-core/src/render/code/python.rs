@@ -10,12 +10,30 @@ use crate::theme::Palette;
 
 use super::super::text::{
     esc, extract_words, line_hash, to_snake_func_name, to_snake_name, to_type_name, wrap_text,
+    wrapped_line_count,
 };
 use super::{LineBuilder, Role, block_text, comment_line, render_structural};
 
 /// Worst case is the dict assignment: name (13) + `["key"] = ` (11) + `""` (2),
 /// plus slack for escaped quotes.
 const TEXT_OVERHEAD: usize = 32;
+
+pub(super) fn line_count(block: &CanonicalBlock, width: usize, block_index: usize) -> usize {
+    if block_text(block).is_none() {
+        return 1;
+    }
+    let wrapped = wrapped_line_count(block.text(), width.saturating_sub(TEXT_OVERHEAD).max(20));
+    if block_index % 41 == 0 || block_index % 43 == 0 {
+        return wrapped + 2;
+    }
+    wrapped
+        + usize::from(
+            block_index % 13 == 0
+                || block_index % 17 == 0
+                || block_index % 23 == 0
+                || block_index % 29 == 0,
+        )
+}
 
 type Pattern = fn(&str, &[&str], usize, &Palette) -> StyledLine;
 
@@ -183,7 +201,7 @@ fn indented_body(
         .enumerate()
         .map(|(offset, line)| {
             let mut builder = LineBuilder::indented(palette, indent);
-            builder.extend(&disguise_line(
+            builder.extend(disguise_line(
                 line,
                 block_index,
                 line_offset + offset,

@@ -43,6 +43,36 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// Count the lines [`wrap_text`] would produce without allocating their text.
+///
+/// Layout and progress calculations need only this number. Keeping the same
+/// greedy loop here avoids constructing every rendered line in a book merely
+/// to immediately discard it.
+#[must_use]
+pub fn wrapped_line_count(text: &str, width: usize) -> usize {
+    let width = if width == 0 { 20 } else { width };
+    let mut lines = 0usize;
+    let mut current_width = 0usize;
+
+    for word in text.split_whitespace() {
+        let word_width = word.chars().count();
+        let next_width = if current_width == 0 {
+            word_width
+        } else {
+            current_width + 1 + word_width
+        };
+        if next_width > width && current_width > 0 {
+            lines += 1;
+            current_width = word_width;
+        } else {
+            current_width = next_width;
+        }
+    }
+
+    // `wrap_text` always returns at least one line, including for whitespace.
+    lines + 1
+}
+
 /// Words usable as synthetic identifiers: ASCII-ish, longer than two characters,
 /// and starting with a letter.
 ///
@@ -200,7 +230,7 @@ pub fn to_snake_func_name(words: &[&str], seed: usize) -> String {
 mod tests {
     use super::{
         esc, extract_words, line_hash, to_func_name, to_snake_func_name, to_snake_name,
-        to_type_name, to_var_name, wrap_text,
+        to_type_name, to_var_name, wrap_text, wrapped_line_count,
     };
 
     fn words<'a>(list: &[&'a str]) -> Vec<&'a str> {
@@ -230,6 +260,26 @@ mod tests {
         let wrapped = wrap_text("one two three four five six seven", 0);
         assert!(wrapped.iter().all(|line| line.chars().count() <= 20));
         assert!(wrapped.len() > 1);
+    }
+
+    #[test]
+    fn allocation_free_line_count_matches_wrapping() {
+        for width in [0, 1, 8, 20, 80] {
+            for text in [
+                "",
+                "   ",
+                "one",
+                "one two three four",
+                "supercalifragilistic tiny",
+                "café no porto ao amanhecer",
+            ] {
+                assert_eq!(
+                    wrapped_line_count(text, width),
+                    wrap_text(text, width).len(),
+                    "width {width}, text {text:?}"
+                );
+            }
+        }
     }
 
     #[test]

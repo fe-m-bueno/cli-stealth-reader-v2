@@ -182,9 +182,42 @@ pub fn render_blocks(blocks: &[CanonicalBlock], options: &RenderOptions<'_>) -> 
     lines
 }
 
+/// Count the lines [`render_blocks`] would produce without allocating them.
+///
+/// Search highlighting and colors do not change geometry. All remaining render
+/// inputs are honored, including code-language structures and relaxed spacing.
+#[must_use]
+pub fn count_rendered_lines(blocks: &[CanonicalBlock], options: &RenderOptions<'_>) -> usize {
+    blocks
+        .iter()
+        .enumerate()
+        .map(|(offset, block)| {
+            let block_index = options.block_index_offset + offset;
+            let rendered = match options.mode {
+                RenderMode::Plain => plain::line_count(block, options.width),
+                RenderMode::Code => {
+                    code::line_count(block, options.width, block_index, options.code_language)
+                }
+            };
+            let internal_spacing = if options.line_spacing == LineSpacing::Relaxed {
+                rendered.saturating_sub(1)
+            } else {
+                0
+            };
+            let trailing_spacing = if options.include_trailing_spacing || offset + 1 < blocks.len()
+            {
+                spacing_after(block_index, options)
+            } else {
+                0
+            };
+            rendered + internal_spacing + trailing_spacing
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{RenderOptions, render_blocks};
+    use super::{RenderOptions, count_rendered_lines, render_blocks};
     use crate::book::CanonicalBlock;
     use crate::settings::{CodeDensity, CodeLanguage, LineSpacing, RenderMode};
     use crate::style::Style;
@@ -330,5 +363,92 @@ mod tests {
             &RenderOptions::new(&theme.palette, 40).with_search(Some("")),
         );
         assert_eq!(plain, searched);
+    }
+
+    #[test]
+    fn line_count_matches_rendering_for_every_render_configuration() {
+        let theme = Theme::default();
+        let blocks = vec![
+            CanonicalBlock::Heading {
+                id: "heading".into(),
+                text: "A quiet harbour at dawn".into(),
+                level: Some(2),
+            },
+            CanonicalBlock::Paragraph {
+                id: "paragraph".into(),
+                text: "She said “come in” while the tide worked at the old stones below.".into(),
+            },
+            CanonicalBlock::Blockquote {
+                id: "quote".into(),
+                text: "A word much longer than the available line width follows: supercalifragilistic.".into(),
+            },
+            CanonicalBlock::ListItem {
+                id: "item".into(),
+                text: "A list entry that wraps onto more than one terminal line.".into(),
+            },
+            CanonicalBlock::SceneBreak {
+                id: "scene".into(),
+                text: String::new(),
+            },
+            CanonicalBlock::Image {
+                id: "image".into(),
+                text: "the harbour".into(),
+                image_source: None,
+            },
+            CanonicalBlock::Anchor {
+                id: "anchor".into(),
+                text: "anchored prose".into(),
+                anchor_id: None,
+            },
+        ];
+
+        for mode in [RenderMode::Plain, RenderMode::Code] {
+            for language in [
+                CodeLanguage::TypeScript,
+                CodeLanguage::Python,
+                CodeLanguage::Rust,
+            ] {
+                for spacing in [
+                    LineSpacing::Compact,
+                    LineSpacing::Normal,
+                    LineSpacing::Relaxed,
+                ] {
+                    for trailing in [false, true] {
+                        for block_offset in [
+                            0,
+                            13,
+                            19,
+                            41,
+                            43,
+                            47,
+                            13 * 23,
+                            17 * 29,
+                            19 * 41,
+                            19 * 41 - 1,
+                            43 * 47,
+                            43 * 47 - 1,
+                        ] {
+                            let options = RenderOptions {
+                                mode,
+                                width: 28,
+                                palette: &theme.palette,
+                                code_language: language,
+                                code_density: CodeDensity::DEFAULT,
+                                plain_highlight: true,
+                                line_spacing: spacing,
+                                block_index_offset: block_offset,
+                                include_trailing_spacing: trailing,
+                                search_query: Some("harbour"),
+                            };
+                            assert_eq!(
+                                count_rendered_lines(&blocks, &options),
+                                render_blocks(&blocks, &options).len(),
+                                "{mode:?} {language:?} {spacing:?} trailing={trailing} offset={block_offset}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

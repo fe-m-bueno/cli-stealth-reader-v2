@@ -5,17 +5,17 @@
 //! overlay are laid out from the same geometry the executor used, which is what
 //! keeps scroll bounds and what is on screen in agreement.
 
+use std::borrow::Cow;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style as TuiStyle;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use reader_app::{Overlay, OverlayEntry, ReaderState};
-use reader_core::pace::{
-    EstimateScope, format_time_left, remaining_words_in_book, remaining_words_in_chapter,
-};
+use reader_core::ProgressVisibility;
+use reader_core::pace::{EstimateScope, format_time_left};
 use reader_core::style::Style;
-use reader_core::{ChapterWords, ProgressVisibility};
 
 use crate::style::{to_tui_line, to_tui_style};
 
@@ -121,7 +121,7 @@ fn draw_body(
     let line_count = lines.len();
     let max_offset = line_count.saturating_sub(body_height);
     let offset = block_offset.min(max_offset);
-    let visible: Vec<Line<'static>> = lines
+    let visible: Vec<Line<'_>> = lines
         .iter()
         .skip(offset)
         .take(body_height)
@@ -186,44 +186,76 @@ fn draw_scrollbar(
 /// The reading progress text for the footer.
 #[must_use]
 pub fn progress_text(state: &mut ReaderState, content_width: u16, body_height: u16) -> String {
-    if state.settings.progress_visibility == ProgressVisibility::Hidden {
+    let visibility = state.settings.progress_visibility;
+    if visibility == ProgressVisibility::Hidden {
         return String::new();
     }
     let Some(book) = state.current_book.as_ref() else {
         return String::new();
     };
-    let chapters: Vec<ChapterWords> = book
-        .chapters
-        .iter()
-        .map(|chapter| ChapterWords::new(chapter.word_count))
-        .collect();
     let chapter_index = state.chapter_index;
-    let chapter_count = chapters.len();
-    let chapter_progress = state.chapter_progress(content_width, body_height);
-    let book_progress = state.book_progress(content_width, body_height);
+    let chapter_count = book.chapters.len();
+    // Time estimates only need the current chapter and, for book scope, a sum
+    // of later chapters. Keep those as scalars instead of allocating a shadow
+    // chapter vector on every repaint.
+    let (chapter_words, later_words) = if matches!(
+        visibility,
+        ProgressVisibility::TimeChapter | ProgressVisibility::TimeBook
+    ) {
+        let current = book
+            .chapters
+            .get(chapter_index)
+            .map_or(0, |chapter| chapter.word_count);
+        let later = book
+            .chapters
+            .get(chapter_index + 1..)
+            .unwrap_or_default()
+            .iter()
+            .map(|chapter| chapter.word_count)
+            .sum::<usize>();
+        (current, later)
+    } else {
+        (0, 0)
+    };
     let wpm = state.pace.effective_wpm();
 
-    match state.settings.progress_visibility {
+    match visibility {
         ProgressVisibility::Hidden => String::new(),
-        ProgressVisibility::TimeChapter => format_time_left(
-            remaining_words_in_chapter(&chapters, chapter_index, chapter_progress),
-            wpm,
-            EstimateScope::Chapter,
-        ),
-        ProgressVisibility::TimeBook => format_time_left(
-            remaining_words_in_book(&chapters, chapter_index, chapter_progress),
-            wpm,
-            EstimateScope::Book,
-        ),
-        ProgressVisibility::Chapter => format!("Ch {:.0}%", chapter_progress * 100.0),
-        ProgressVisibility::Book => format!("Book {:.0}%", book_progress * 100.0),
-        ProgressVisibility::Both => format!(
-            "Ch {}/{} {:.0}% · Book {:.0}%",
-            chapter_index + 1,
-            chapter_count,
-            chapter_progress * 100.0,
-            book_progress * 100.0
-        ),
+        ProgressVisibility::TimeChapter => {
+            let progress = state.chapter_progress(content_width, body_height);
+            format_time_left(
+                chapter_words as f64 * (1.0 - progress),
+                wpm,
+                EstimateScope::Chapter,
+            )
+        }
+        ProgressVisibility::TimeBook => {
+            let progress = state.chapter_progress(content_width, body_height);
+            format_time_left(
+                chapter_words as f64 * (1.0 - progress) + later_words as f64,
+                wpm,
+                EstimateScope::Book,
+            )
+        }
+        ProgressVisibility::Chapter => {
+            let progress = state.chapter_progress(content_width, body_height);
+            format!("Ch {:.0}%", progress * 100.0)
+        }
+        ProgressVisibility::Book => {
+            let progress = state.book_progress(content_width, body_height);
+            format!("Book {:.0}%", progress * 100.0)
+        }
+        ProgressVisibility::Both => {
+            let chapter_progress = state.chapter_progress(content_width, body_height);
+            let book_progress = state.book_progress(content_width, body_height);
+            format!(
+                "Ch {}/{} {:.0}% · Book {:.0}%",
+                chapter_index + 1,
+                chapter_count,
+                chapter_progress * 100.0,
+                book_progress * 100.0
+            )
+        }
     }
 }
 
@@ -237,13 +269,12 @@ fn draw_footer(
     let progress = progress_text(state, layout.content_width, layout.body_height);
     // A running timer sits alongside the progress, since both answer "how long".
     let progress = match &command_bar.timer {
-        Some(timer) if progress.is_empty() => timer.clone(),
-        Some(timer) => format!("{timer} · {progress}"),
-        None => progress,
+        Some(timer) if progress.is_empty() => Cow::Borrowed(timer.as_str()),
+        Some(timer) => Cow::Owned(format!("{timer} · {progress}")),
+        None => Cow::Owned(progress),
     };
-    let status = state.status.clone();
 
-    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut rows: Vec<Line<'_>> = Vec::new();
     if command_bar.active {
         rows.push(Line::from(vec![
             Span::styled(
@@ -251,7 +282,7 @@ fn draw_footer(
                 to_tui_style(Style::fg(state.theme.palette.accent).bold()),
             ),
             Span::styled(
-                command_bar.buffer.clone(),
+                command_bar.buffer.as_str(),
                 to_tui_style(Style::fg(state.theme.palette.foreground)),
             ),
         ]));
@@ -261,9 +292,14 @@ fn draw_footer(
     let width = area.width as usize;
     let progress_width = progress.chars().count();
     let status_width = width.saturating_sub(progress_width + 1);
-    let trimmed: String = status.chars().take(status_width).collect();
+    let status_length = state.status.chars().count();
+    let trimmed = if status_length <= status_width {
+        Cow::Borrowed(state.status.as_str())
+    } else {
+        Cow::Owned(state.status.chars().take(status_width).collect::<String>())
+    };
     let gap = width
-        .saturating_sub(trimmed.chars().count())
+        .saturating_sub(status_length.min(status_width))
         .saturating_sub(progress_width);
     rows.push(Line::from(vec![
         Span::styled(trimmed, to_tui_style(Style::fg(state.theme.palette.dim))),

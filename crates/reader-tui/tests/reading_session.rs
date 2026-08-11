@@ -158,7 +158,6 @@ fn scrolling_and_chapter_keys_move_through_the_book() {
 
     // A chapter that fits the screen cannot scroll, so shrink the terminal first.
     session.terminal = Terminal::new(TestBackend::new(48, 10)).expect("terminal");
-    session.state.invalidate_layout();
     let first = session.rows();
 
     session.press(KeyCode::Char('j'));
@@ -360,7 +359,6 @@ fn the_reader_survives_a_narrow_terminal_and_a_resize() {
     let mut session = Session::start("resize");
     for (width, height) in [(20u16, 6u16), (200, 60), (40, 10)] {
         session.terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
-        session.state.invalidate_layout();
         let rows = session.rows();
         assert_eq!(
             rows.len(),

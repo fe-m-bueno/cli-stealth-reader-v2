@@ -71,6 +71,61 @@ v1.
   sequences and later had to parse them back to highlight search matches. v2
   renders structural spans and maps them to terminal attributes once, at the
   edge. The stripped text is identical, which the render parity fixture proves.
+  Repaints now borrow each span's text when adapting it to Ratatui, so the cached
+  `String`s are not cloned again for every visible line. The borrowed shape is
+  guarded by `a_converted_line_borrows_its_text_from_the_render_cache`.
+- **Render caches invalidate themselves from complete keys.** Chapter navigation,
+  search jumps, history, settings changes, and terminal resizes no longer depend
+  on command handlers remembering to discard cached data. Whole-book line counts
+  are keyed by book id and import hash, geometry-affecting settings, and content
+  width; rendered chapters use a separate key containing only inputs that can
+  change their spans. This means progress visibility, mouse capture, and settings
+  irrelevant to the active renderer no longer evict useful work. Line counts use
+  an allocation-free render path, and whole-book progress reads prefix sums in
+  constant time instead of summing every chapter on every frame. The parity test
+  asserts that allocation-free counts equal full rendering across modes,
+  languages, spacing policies, trailing gaps, and overlapping pattern indices.
+  Changing only terminal height recomputes the cheap viewport counts in the
+  existing allocation instead of rendering every chapter again. Explicit
+  clearing is reserved for removing or replacing book content. State and
+  executor tests assert height reuse, content-hash invalidation, and reuse across
+  chapter navigation. On the 40-chapter benchmark, the replacement layout pass
+  takes roughly 5.4 ms instead of the 49.6 ms needed to fully render and discard
+  the same book's lines.
+- **Plain rendering avoids per-character allocation.** Paragraphs without quote
+  or dash dialogue take a direct wrapping path. Paragraphs with dialogue build
+  one string per contiguous style run rather than one temporary string per
+  character. On the committed 265,820-word benchmark corpus this reduced the
+  median plain chapter render from 1.16 ms to roughly 0.5 ms, while render parity
+  remained unchanged.
+- **EPUB parsing walks borrowed DOM nodes.** The HTML adapter no longer clones
+  every child handle, allocates every tag name, or builds raw and normalized text
+  as separate trees of temporary strings. Container, package, and NCX parsing
+  compares borrowed qualified-name bytes instead of allocating a lowercased
+  `String` for every XML event. Cached archive blocks are borrowed and cloned
+  only when a chapter actually takes ownership. The same corpus's large EPUB
+  import moved from 25.25 ms to roughly 22 ms; import golden files remain
+  byte-for-byte equal. Stable IDs also write hexadecimal digits directly into
+  their final buffers instead of allocating once per digest byte.
+- **PDF metadata and pages share one parsed document.** The importer previously
+  loaded the same PDF once through `pdf-extract` for pages and again through
+  `lopdf` for metadata. It now decrypts and reuses one document, while paragraph
+  normalization and word counting run in one pass without intermediate joined
+  vectors. Page/chapter/diagnostic behavior is unchanged and remains protected
+  by fixture tests.
+- **Storage reuses SQL plans and streams large chapter rows.** Repeated chapter,
+  diagnostic, settings, and book statements use SQLite's prepared-statement
+  cache. Loading a book deserializes each chapter as its row arrives instead of
+  retaining every chapter JSON at once, and tag filtering uses a hash set rather
+  than a quadratic vector scan. Position plus `last_opened_at` now commit in one
+  atomic transaction instead of two autocommits. In the added 265,820-word book
+  benchmark, median re-save moved from 4.93 ms to roughly 4.05 ms and reload from
+  3.14 ms to roughly 2.82 ms.
+- **Repaints borrow footer text and avoid unrelated work.** Non-navigation input
+  no longer asks layout metrics for scroll bounds. Percentage footers calculate
+  only the requested scope; time footers keep word totals as scalars instead of
+  allocating a shadow chapter vector. Status, command input, and timer-only text
+  are borrowed by Ratatui when they fit unchanged.
 - **Timestamps and terminal geometry are parameters.** Storage writes and command
   execution take `now` and the viewport rather than reading the clock or
   `process.stdout`, which is what makes the executor contract deterministic.

@@ -238,7 +238,6 @@ pub fn change(state: &mut ReaderState, row_index: usize) -> Option<SettingField>
     field.cycle(&mut settings);
     state.settings = settings;
     state.refresh_theme();
-    state.invalidate_layout();
     Some(field)
 }
 
@@ -253,7 +252,6 @@ pub fn cancel(state: &mut ReaderState) {
     if let Some(previous) = state.settings_backup.take() {
         state.settings = previous;
         state.refresh_theme();
-        state.invalidate_layout();
     }
 }
 

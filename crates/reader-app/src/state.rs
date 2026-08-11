@@ -4,13 +4,14 @@
 //! is always inside the book, a scroll offset is always inside the chapter, and
 //! history only records places the reader actually visited.
 
-use reader_core::render::{RenderOptions, render_blocks};
+use reader_core::render::{RenderOptions, count_rendered_lines};
 use reader_core::{
     AppSettings, CanonicalBook, LibrarySortKey, PaceState, Palette, SortDirection, StyledLine,
     Theme,
 };
 
 use crate::layout::{OverlayLayout, Viewport, ViewportLayout, compute_layout};
+use crate::render_cache::LayoutBehavior;
 
 /// Longest navigation history kept, oldest dropped first.
 pub const MAX_NAV_HISTORY: usize = 50;
@@ -154,6 +155,8 @@ pub struct ReaderState {
     pub should_quit: bool,
     /// Cached per-chapter line counts, invalidated whenever rendering inputs change.
     layout_metrics: Option<LayoutMetrics>,
+    layout_metrics_cache_hits: u64,
+    layout_metrics_cache_misses: u64,
     /// The current chapter's rendered lines, so repaints do not re-render it.
     render_cache: crate::render_cache::ChapterRenderCache,
     /// Per-block line counts used to map focus blocks to viewport offsets.
@@ -166,12 +169,29 @@ pub struct ReaderState {
 #[derive(Debug, Clone, PartialEq)]
 struct LayoutMetrics {
     book_id: String,
-    settings: AppSettings,
+    book_import_hash: String,
+    behavior: LayoutBehavior,
     content_width: u16,
     body_height: u16,
     chapter_line_counts: Vec<usize>,
-    /// Screens of content per chapter, used for whole-book progress.
-    chapter_view_counts: Vec<usize>,
+    /// Prefix sum of scrollable views, with a leading zero.
+    chapter_view_offsets: Vec<usize>,
+}
+
+impl LayoutMetrics {
+    fn refresh_view_counts(&mut self, body_height: u16) {
+        let height = body_height.max(1) as usize;
+        self.chapter_view_offsets.clear();
+        self.chapter_view_offsets
+            .reserve(self.chapter_line_counts.len() + 1);
+        self.chapter_view_offsets.push(0);
+        for lines in &self.chapter_line_counts {
+            let views = lines.saturating_sub(height) + 1;
+            let previous = self.chapter_view_offsets.last().copied().unwrap_or(0);
+            self.chapter_view_offsets.push(previous + views);
+        }
+        self.body_height = body_height;
+    }
 }
 
 /// Rendered line counts for the current chapter's blocks, and their inputs.
@@ -181,7 +201,7 @@ struct FocusLineMetrics {
     book_import_hash: String,
     chapter_index: usize,
     chapter_id: String,
-    settings: AppSettings,
+    behavior: LayoutBehavior,
     palette: Palette,
     content_width: u16,
     counts: Vec<usize>,
@@ -221,6 +241,8 @@ impl ReaderState {
             command_prefill: None,
             should_quit: false,
             layout_metrics: None,
+            layout_metrics_cache_hits: 0,
+            layout_metrics_cache_misses: 0,
             render_cache: crate::render_cache::ChapterRenderCache::default(),
             focus_line_metrics: None,
             focus_line_cache_hits: 0,
@@ -243,18 +265,13 @@ impl ReaderState {
         self.overlay_search.reset();
     }
 
-    /// Drop cached layout metrics.
+    /// Forget all render-derived data after removing or replacing book content.
     ///
-    /// The render caches carry their own keys, so changing an offset, viewport,
-    /// setting, or chapter naturally selects the right entry without throwing
-    /// away the rendered lines. Use [`Self::clear_render_cache`] when replacing
-    /// the book content behind an existing identity.
-    pub fn invalidate_layout(&mut self) {
+    /// Ordinary changes do not call this: each cache compares its complete input
+    /// key, keeping invalidation correctness inside the cache instead of spread
+    /// across command and terminal event handlers.
+    pub(crate) fn clear_render_caches(&mut self) {
         self.layout_metrics = None;
-    }
-
-    /// Forget rendered chapter and focus data after replacing book content.
-    pub(crate) fn clear_render_cache(&mut self) {
         self.render_cache.clear();
         self.focus_line_metrics = None;
     }
@@ -311,6 +328,15 @@ impl ReaderState {
     #[must_use]
     pub const fn focus_line_cache_stats(&self) -> (u64, u64) {
         (self.focus_line_cache_hits, self.focus_line_cache_misses)
+    }
+
+    /// Line-count cache hits and full-book render passes.
+    #[must_use]
+    pub const fn layout_metrics_cache_stats(&self) -> (u64, u64) {
+        (
+            self.layout_metrics_cache_hits,
+            self.layout_metrics_cache_misses,
+        )
     }
 
     /// The book's id, when one is open.
@@ -374,13 +400,14 @@ impl ReaderState {
         let stale = match &self.layout_metrics {
             Some(metrics) => {
                 metrics.book_id != book.id
-                    || metrics.settings != self.settings
+                    || metrics.book_import_hash != book.import_hash
+                    || metrics.behavior != LayoutBehavior::from(self.settings)
                     || metrics.content_width != content_width
-                    || metrics.body_height != body_height
             }
             None => true,
         };
         if stale {
+            self.layout_metrics_cache_misses += 1;
             // Search highlighting never changes line counts, so it is left out
             // of the options here on purpose.
             let options = RenderOptions {
@@ -390,23 +417,25 @@ impl ReaderState {
             let counts: Vec<usize> = book
                 .chapters
                 .iter()
-                .map(|chapter| render_blocks(&chapter.blocks, &options).len())
+                .map(|chapter| count_rendered_lines(&chapter.blocks, &options))
                 .collect();
-            let views = counts
-                .iter()
-                .map(|lines| {
-                    let height = body_height.max(1) as usize;
-                    lines.saturating_sub(height) + 1
-                })
-                .collect();
-            self.layout_metrics = Some(LayoutMetrics {
+            let mut metrics = LayoutMetrics {
                 book_id: book.id.clone(),
-                settings: self.settings,
+                book_import_hash: book.import_hash.clone(),
+                behavior: LayoutBehavior::from(self.settings),
                 content_width,
                 body_height,
                 chapter_line_counts: counts,
-                chapter_view_counts: views,
-            });
+                chapter_view_offsets: Vec::new(),
+            };
+            metrics.refresh_view_counts(body_height);
+            self.layout_metrics = Some(metrics);
+        } else {
+            self.layout_metrics_cache_hits += 1;
+            let metrics = self.layout_metrics.as_mut()?;
+            if metrics.body_height != body_height {
+                metrics.refresh_view_counts(body_height);
+            }
         }
         self.layout_metrics.as_ref()
     }
@@ -438,15 +467,24 @@ impl ReaderState {
     pub fn book_progress(&mut self, content_width: u16, body_height: u16) -> f64 {
         let chapter_index = self.chapter_index;
         let block_offset = self.block_offset;
-        let max_offset = self.chapter_max_offset(content_width, body_height);
         let Some(metrics) = self.metrics(content_width, body_height) else {
             return 0.0;
         };
-        let total: usize = metrics.chapter_view_counts.iter().sum();
+        let max_offset = metrics
+            .chapter_line_counts
+            .get(chapter_index)
+            .copied()
+            .unwrap_or(0)
+            .saturating_sub(body_height as usize);
+        let total = metrics.chapter_view_offsets.last().copied().unwrap_or(0);
         if total <= 1 {
             return 0.0;
         }
-        let previous: usize = metrics.chapter_view_counts[..chapter_index].iter().sum();
+        let previous = metrics
+            .chapter_view_offsets
+            .get(chapter_index)
+            .copied()
+            .unwrap_or(0);
         let offset = block_offset.min(max_offset);
         ((previous + offset) as f64 / (total - 1) as f64).clamp(0.0, 1.0)
     }
@@ -550,7 +588,7 @@ impl ReaderState {
                 && metrics.book_import_hash == book.import_hash
                 && metrics.chapter_index == *chapter_index
                 && metrics.chapter_id == chapter.id
-                && metrics.settings == *settings
+                && metrics.behavior == LayoutBehavior::from(*settings)
                 && metrics.palette == theme.palette
                 && metrics.content_width == content_width
         });
@@ -575,11 +613,10 @@ impl ReaderState {
                 .iter()
                 .enumerate()
                 .map(|(index, block)| {
-                    render_blocks(
+                    count_rendered_lines(
                         std::slice::from_ref(block),
                         &options.clone().with_block_offset(index),
                     )
-                    .len()
                 })
                 .collect();
             *focus_line_metrics = Some(FocusLineMetrics {
@@ -587,7 +624,7 @@ impl ReaderState {
                 book_import_hash: book.import_hash.clone(),
                 chapter_index: *chapter_index,
                 chapter_id: chapter.id.clone(),
-                settings: *settings,
+                behavior: LayoutBehavior::from(*settings),
                 palette: theme.palette,
                 content_width,
                 counts,
@@ -826,18 +863,73 @@ mod tests {
     }
 
     #[test]
-    fn layout_invalidation_keeps_a_matching_chapter_render() {
+    fn changing_only_the_body_height_reuses_rendered_line_counts() {
         let mut state = state_with_book();
 
-        let _ = state.chapter_lines(40);
-        state.invalidate_layout();
-        let _ = state.chapter_lines(40);
+        let line_count = state.chapter_line_count(40, 10);
+        assert_eq!(state.layout_metrics_cache_stats(), (0, 1));
 
-        assert_eq!(state.render_cache_stats(), (1, 1));
+        assert_eq!(state.chapter_line_count(40, 20), line_count);
+        let metrics = state.layout_metrics.as_ref().expect("metrics were cached");
+        assert_eq!(metrics.body_height, 20);
+        assert!(
+            metrics
+                .chapter_view_offsets
+                .windows(2)
+                .zip(&metrics.chapter_line_counts)
+                .all(|(offsets, lines)| offsets[1] - offsets[0] == lines.saturating_sub(20) + 1)
+        );
+        assert_eq!(
+            state.layout_metrics_cache_stats(),
+            (1, 1),
+            "height changes should only rebuild cheap viewport counts"
+        );
+    }
 
-        state.clear_render_cache();
+    #[test]
+    fn non_geometric_settings_reuse_line_counts() {
+        let mut state = state_with_book();
+        let line_count = state.chapter_line_count(40, 10);
+
+        state.settings.progress_visibility = reader_core::ProgressVisibility::Hidden;
+        state.settings.mouse_capture = !state.settings.mouse_capture;
+        state.settings.plain_highlight = !state.settings.plain_highlight;
+        state.settings.code_density = reader_core::CodeDensity::MAX;
+
+        assert_eq!(state.chapter_line_count(40, 10), line_count);
+        assert_eq!(state.layout_metrics_cache_stats(), (1, 1));
+    }
+
+    #[test]
+    fn replacing_book_content_invalidates_layout_metrics_by_import_hash() {
+        let mut state = state_with_book();
+        let _ = state.chapter_line_count(40, 10);
+
+        let current_book = state.current_book.as_mut().expect("book is open");
+        current_book.import_hash = "replacement-hash".into();
+        current_book.chapters[0]
+            .blocks
+            .push(CanonicalBlock::Paragraph {
+                id: "replacement-block".into(),
+                text: "new content with enough words to require another rendered line".into(),
+            });
+
+        let _ = state.chapter_line_count(40, 10);
+        assert_eq!(state.layout_metrics_cache_stats(), (0, 2));
+    }
+
+    #[test]
+    fn clearing_render_caches_drops_layout_and_chapter_data_together() {
+        let mut state = state_with_book();
+
+        let _ = state.chapter_line_count(40, 10);
         let _ = state.chapter_lines(40);
-        assert_eq!(state.render_cache_stats(), (1, 2));
+        state.clear_render_caches();
+
+        let _ = state.chapter_line_count(40, 10);
+        let _ = state.chapter_lines(40);
+        assert_eq!(state.layout_metrics_cache_stats(), (0, 2));
+        assert_eq!(state.render_cache_stats(), (0, 2));
     }
 
     #[test]

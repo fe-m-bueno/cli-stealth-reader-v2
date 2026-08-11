@@ -64,6 +64,14 @@ identity, imported content hash, chapter identity, width, palette, and every
 rendering setting that can affect their output. Ratatui owns the final frame
 diff, so unchanged cells are not written to the terminal between frames.
 
+Whole-book layout metrics use the same self-invalidating approach. Their rendered
+line counts survive chapter changes and height-only resizes; height changes update
+only the derived viewport prefix sums, while width, content hash, or
+geometry-affecting rendering settings trigger an allocation-free line-count pass.
+Settings that cannot change geometry are deliberately absent from the key. This
+keeps cache correctness in `ReaderState` rather than distributing manual
+invalidation calls across commands and TUI events.
+
 ### Refinements closed since the first pass
 
 The four seams that were partial are now complete, and each one came out a little

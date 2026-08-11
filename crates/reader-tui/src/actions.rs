@@ -35,14 +35,55 @@ pub fn apply(
     command_bar: &mut CommandBar,
     context: CommandContext,
 ) -> Result<(), reader_app::ExecutionError> {
-    let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
     let page = (context.body_height as usize).saturating_sub(1).max(1);
+    let clamp_offset_after = matches!(
+        &action,
+        Action::HistoryBack
+            | Action::HistoryForward
+            | Action::Dismiss
+            | Action::SubmitCommand
+            | Action::OverlayConfirm
+            | Action::ChangeSetting
+            | Action::CycleRenderMode
+            | Action::CycleCodeDensity
+            | Action::RunCommand(_)
+    );
+    let clamp_overlay_after = matches!(
+        &action,
+        Action::OverlayUp
+            | Action::OverlayDown
+            | Action::OverlayPageUp
+            | Action::OverlayPageDown
+            | Action::OverlayHome
+            | Action::OverlayEnd
+            | Action::OverlayConfirm
+            | Action::OverlayDelete
+            | Action::CycleLibrarySort
+            | Action::ReverseLibrarySort
+            | Action::BeginOverlaySearch
+            | Action::EndOverlaySearch
+            | Action::OverlaySearchChar(_)
+            | Action::OverlaySearchBackspace
+            | Action::ToggleAllGroups
+            | Action::ChangeSetting
+            | Action::NextTab
+            | Action::PreviousTab
+            | Action::SubmitCommand
+            | Action::OpenColorSchemes
+            | Action::OpenThemes
+            | Action::OpenSettings
+            | Action::OpenChapters
+            | Action::OpenBookmarks
+            | Action::OpenShortcuts
+            | Action::RunCommand(_)
+    );
 
     match action {
         Action::Ignore => {}
         Action::Quit => state.should_quit = true,
 
         Action::ScrollDown(step) => {
+            let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
             state.block_offset = (state.block_offset + step).min(max_offset);
         }
         Action::ScrollUp(step) => {
@@ -50,6 +91,7 @@ pub fn apply(
         }
         Action::PageDown => {
             state.push_nav_history();
+            let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
             state.block_offset = (state.block_offset + page).min(max_offset);
         }
         Action::PageUp => {
@@ -62,14 +104,14 @@ pub fn apply(
         }
         Action::ChapterEnd | Action::JumpToBottom => {
             state.push_nav_history();
-            state.block_offset = max_offset;
+            state.block_offset =
+                state.chapter_max_offset(context.content_width, context.body_height);
         }
         Action::PreviousChapter => execute_command(state, storage, "/prev", context)?,
         Action::NextChapter => execute_command(state, storage, "/next", context)?,
 
         Action::HistoryBack => {
             if state.history_back() {
-                state.invalidate_layout();
                 state.status = "Went back".to_owned();
             } else {
                 state.status = "No earlier position in history.".to_owned();
@@ -77,7 +119,6 @@ pub fn apply(
         }
         Action::HistoryForward => {
             if state.history_forward() {
-                state.invalidate_layout();
                 state.status = "Went forward".to_owned();
             } else {
                 state.status = "No later position in history.".to_owned();
@@ -266,7 +307,13 @@ pub fn apply(
         command_bar.buffer = prefill;
     }
 
-    clamp_cursors(state, storage, context);
+    clamp_cursors(
+        state,
+        storage,
+        context,
+        clamp_overlay_after,
+        clamp_offset_after,
+    );
     Ok(())
 }
 
@@ -296,14 +343,24 @@ fn advance_search(state: &mut ReaderState, forward: bool, context: CommandContex
 }
 
 /// Keep the overlay selection and the scroll offset inside their bounds.
-fn clamp_cursors(state: &mut ReaderState, storage: &Storage, context: CommandContext) {
-    // A closed or empty overlay has nothing to select.
-    let entries = visible_entries(state, storage, context.now).len();
-    state.overlay_cursor = match entries {
-        0 => 0,
-        count => state.overlay_cursor.min(count - 1),
-    };
-    state.clamp_offset(context.content_width, context.body_height);
+fn clamp_cursors(
+    state: &mut ReaderState,
+    storage: &Storage,
+    context: CommandContext,
+    clamp_overlay: bool,
+    clamp_offset: bool,
+) {
+    if clamp_overlay {
+        // A closed or empty overlay has nothing to select.
+        let entries = visible_entries(state, storage, context.now).len();
+        state.overlay_cursor = match entries {
+            0 => 0,
+            count => state.overlay_cursor.min(count - 1),
+        };
+    }
+    if clamp_offset {
+        state.clamp_offset(context.content_width, context.body_height);
+    }
 }
 
 /// Act on the selected overlay entry.
@@ -351,7 +408,6 @@ fn confirm_overlay(
                 state.chapter_index = bookmark
                     .chapter_index
                     .min(state.chapter_count().saturating_sub(1));
-                state.invalidate_layout();
                 state.block_offset = bookmark.block_offset;
                 state.push_nav_history();
                 state.status = match bookmark.label {
@@ -372,7 +428,6 @@ fn confirm_overlay(
                 if let Some(chapter_index) = note.chapter_index {
                     state.chapter_index =
                         chapter_index.min(state.chapter_count().saturating_sub(1));
-                    state.invalidate_layout();
                 }
                 state.block_offset = note.block_offset.unwrap_or(0);
                 state.push_nav_history();
@@ -586,6 +641,16 @@ mod tests {
         }
         let max = state.chapter_max_offset(CONTEXT.content_width, CONTEXT.body_height);
         assert_eq!(state.block_offset, max, "cannot scroll past the end");
+    }
+
+    #[test]
+    fn non_navigation_actions_do_not_touch_layout_metrics() {
+        let (mut state, mut storage, mut bar) = reader();
+        let before = state.layout_metrics_cache_stats();
+
+        act(Action::Ignore, &mut state, &mut storage, &mut bar);
+
+        assert_eq!(state.layout_metrics_cache_stats(), before);
     }
 
     #[test]

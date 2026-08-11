@@ -57,23 +57,25 @@ pub fn to_tui_style(style: Style) -> TuiStyle {
 
 /// Convert a rendered line to a Ratatui line.
 #[must_use]
-pub fn to_tui_line(line: &StyledLine) -> Line<'static> {
+pub fn to_tui_line(line: &StyledLine) -> Line<'_> {
     Line::from(
         line.spans
             .iter()
-            .map(|span| Span::styled(span.text.clone(), to_tui_style(span.style)))
+            .map(|span| Span::styled(span.text.as_str(), to_tui_style(span.style)))
             .collect::<Vec<_>>(),
     )
 }
 
 /// Convert several rendered lines.
 #[must_use]
-pub fn to_tui_lines(lines: &[StyledLine]) -> Vec<Line<'static>> {
+pub fn to_tui_lines(lines: &[StyledLine]) -> Vec<Line<'_>> {
     lines.iter().map(to_tui_line).collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use ratatui::style::{Color as TuiColor, Modifier};
     use reader_core::style::{AnsiColor, Color, Span, Style, StyledLine};
 
@@ -127,5 +129,18 @@ mod tests {
         assert_eq!(converted.spans.len(), 2);
         assert_eq!(converted.spans[0].content, "const ");
         assert_eq!(converted.spans[1].content, "value");
+    }
+
+    #[test]
+    fn a_converted_line_borrows_its_text_from_the_render_cache() {
+        let mut line = StyledLine::empty();
+        line.push(Span::new("cached text", Style::new()));
+
+        let converted = to_tui_line(&line);
+
+        assert!(
+            matches!(converted.spans[0].content, Cow::Borrowed("cached text")),
+            "a repaint must not clone every cached span"
+        );
     }
 }

@@ -14,7 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use reader_core::render::{RenderOptions, render_blocks};
+use reader_core::render::{RenderOptions, count_rendered_lines, render_blocks};
 use reader_core::{AppSettings, CanonicalBook, CodeLanguage, RenderMode, Theme};
 use reader_storage::{AppPaths, Storage};
 
@@ -160,6 +160,23 @@ fn measure_import(path: &Path) -> Option<(Stats, CanonicalBook)> {
     Some((stats, book))
 }
 
+/// Reimport and reload a representative book from an already-open library.
+fn measure_storage_book(book: &CanonicalBook) -> (Stats, Stats) {
+    let scratch = std::env::temp_dir().join("stealth-reader-bench-book-storage");
+    std::fs::remove_dir_all(&scratch).ok();
+    let paths = AppPaths::from_roots(&scratch.join("data"), &scratch.join("cache"));
+    let mut storage = Storage::open(&paths).expect("the benchmark library should open");
+
+    let save = time(IMPORT_RUNS, || {
+        storage.save_book(book, RenderMode::Plain, 1_700_000_000_000)
+    });
+    let load = time(IMPORT_RUNS, || storage.book(&book.id));
+
+    drop(storage);
+    std::fs::remove_dir_all(&scratch).ok();
+    (save, load)
+}
+
 fn render_options<'a>(theme: &'a Theme, settings: &AppSettings) -> RenderOptions<'a> {
     RenderOptions {
         mode: settings.render_mode,
@@ -210,6 +227,7 @@ fn main() {
 
     let mut render = serde_json::Map::new();
     let mut corpus = serde_json::Map::new();
+    let storage_book = large_book.as_ref().map(measure_storage_book);
     if let Some(book) = large_book.as_ref() {
         let widest = book
             .chapters
@@ -288,6 +306,17 @@ fn main() {
             })
             .to_json(),
         );
+        render.insert(
+            "wholeBookLineCountsMs".to_owned(),
+            time(RENDER_RUNS, || {
+                let options = render_options(&theme, &plain_settings);
+                book.chapters
+                    .iter()
+                    .map(|chapter| count_rendered_lines(&chapter.blocks, &options))
+                    .sum::<usize>()
+            })
+            .to_json(),
+        );
 
         // Memory is measured after the heaviest work, matching the v1 probe.
         let options = render_options(&theme, &code_settings);
@@ -305,6 +334,13 @@ fn main() {
             None => serde_json::json!({ "processWallMs": null }),
         },
         "storageOpenMs": storage_open.to_json(),
+        "storageBook": match storage_book {
+            Some((save, load)) => serde_json::json!({
+                "saveLargeMs": save.to_json(),
+                "loadLargeMs": load.to_json(),
+            }),
+            None => serde_json::Value::Null,
+        },
         "discoveryMs": discovery.to_json(),
         "imports": imports,
         "render": render,

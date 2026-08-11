@@ -171,10 +171,10 @@ fn promote_leading_headings(blocks: Vec<CanonicalBlock>) -> Vec<CanonicalBlock> 
 }
 
 fn finalize_chapter_blocks(blocks: Vec<CanonicalBlock>) -> Vec<CanonicalBlock> {
-    let without_anchors = strip_anchors(&blocks);
     // A leading image is a chapter ornament, not content.
-    let trimmed: Vec<CanonicalBlock> = without_anchors
+    let trimmed: Vec<CanonicalBlock> = blocks
         .into_iter()
+        .filter(|block| !matches!(block, CanonicalBlock::Anchor { .. }))
         .enumerate()
         .filter(|(index, block)| !(*index == 0 && matches!(block, CanonicalBlock::Image { .. })))
         .map(|(_, block)| block)
@@ -208,11 +208,12 @@ fn with_synthetic_heading(
     {
         return blocks;
     }
-    let mut result = vec![CanonicalBlock::Heading {
+    let mut result = Vec::with_capacity(blocks.len() + 1);
+    result.push(CanonicalBlock::Heading {
         id: format!("{prefix}-heading"),
         text: label.to_owned(),
         level: Some(1),
-    }];
+    });
     result.extend(blocks);
     result
 }
@@ -389,10 +390,10 @@ pub fn import_epub(path: &Path) -> Result<CanonicalBook, ImportError> {
             let start_anchor = fragment.clone().or_else(|| {
                 end_anchor
                     .as_ref()
-                    .and_then(|_| find_first_chapter_anchor(&base_blocks))
+                    .and_then(|_| find_first_chapter_anchor(base_blocks))
             });
             blocks = slice_blocks_by_anchors(
-                &base_blocks,
+                base_blocks,
                 start_anchor.as_deref(),
                 end_anchor.as_deref(),
             );
@@ -410,7 +411,7 @@ pub fn import_epub(path: &Path) -> Result<CanonicalBook, ImportError> {
             for (offset, chapter_path) in chapter_paths.iter().enumerate() {
                 let parsed = blocks_for_file(&mut archive, &mut file_blocks, chapter_path)
                     .unwrap_or_default();
-                let without_anchors = strip_anchors(&parsed);
+                let without_anchors = strip_anchors(parsed);
                 // A title-only opening file leaves the chapter without a heading.
                 if offset == 0 && without_anchors.is_empty() && chapter_paths.len() > 1 {
                     inject_heading = true;
@@ -421,7 +422,7 @@ pub fn import_epub(path: &Path) -> Result<CanonicalBook, ImportError> {
         } else {
             let base_blocks =
                 blocks_for_file(&mut archive, &mut file_blocks, &base_path).unwrap_or_default();
-            blocks = strip_anchors(&base_blocks)
+            blocks = strip_anchors(base_blocks)
                 .into_iter()
                 .enumerate()
                 .map(|(block_index, block)| {
@@ -482,18 +483,17 @@ pub fn import_epub(path: &Path) -> Result<CanonicalBook, ImportError> {
     })
 }
 
-fn blocks_for_file(
+fn blocks_for_file<'cache>(
     archive: &mut Archive,
-    cache: &mut HashMap<String, Vec<CanonicalBlock>>,
+    cache: &'cache mut HashMap<String, Vec<CanonicalBlock>>,
     path: &str,
-) -> Option<Vec<CanonicalBlock>> {
-    if let Some(cached) = cache.get(path) {
-        return Some(cached.clone());
+) -> Option<&'cache [CanonicalBlock]> {
+    if !cache.contains_key(path) {
+        let source = read_text(archive, path).ok()?;
+        let blocks = extract_blocks_from_html(&source, &block_prefix(path));
+        cache.insert(path.to_owned(), blocks);
     }
-    let source = read_text(archive, path).ok()?;
-    let blocks = extract_blocks_from_html(&source, &block_prefix(path));
-    cache.insert(path.to_owned(), blocks.clone());
-    Some(blocks)
+    cache.get(path).map(Vec::as_slice)
 }
 
 #[cfg(test)]

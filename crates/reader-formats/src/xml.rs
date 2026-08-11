@@ -31,21 +31,20 @@ impl From<quick_xml::Error> for XmlError {
     }
 }
 
-/// The local name of an element, with any namespace prefix removed.
-fn local_name(start: &BytesStart<'_>) -> String {
-    let raw = start.name();
-    let name = std::str::from_utf8(raw.as_ref()).unwrap_or_default();
-    name.rsplit(':').next().unwrap_or(name).to_lowercase()
+/// Whether a qualified XML name has the requested local part.
+///
+/// EPUB names are ASCII. Comparing their borrowed bytes avoids allocating and
+/// lowercasing a `String` for every start and end event in the document.
+fn has_local_name(name: &[u8], wanted: &[u8]) -> bool {
+    name.rsplit(|byte| *byte == b':')
+        .next()
+        .is_some_and(|local| local.eq_ignore_ascii_case(wanted))
 }
 
 /// An attribute value, matched on its local name.
 fn attribute(start: &BytesStart<'_>, wanted: &str) -> Option<String> {
     start.attributes().flatten().find_map(|attribute| {
-        let key = std::str::from_utf8(attribute.key.as_ref())
-            .unwrap_or_default()
-            .to_owned();
-        let local = key.rsplit(':').next().unwrap_or(&key).to_lowercase();
-        if local == wanted {
+        if has_local_name(attribute.key.as_ref(), wanted.as_bytes()) {
             attribute
                 .normalized_value(XmlVersion::Implicit1_0)
                 .ok()
@@ -72,7 +71,7 @@ pub fn parse_container(source: &str) -> Result<String, XmlError> {
     loop {
         match reader.read_event()? {
             Event::Start(start) | Event::Empty(start) => {
-                if local_name(&start) == "rootfile"
+                if has_local_name(start.name().as_ref(), b"rootfile")
                     && let Some(path) = attribute(&start, "full-path")
                 {
                     return Ok(path);
@@ -146,33 +145,52 @@ pub fn parse_package(source: &str) -> Result<Package, XmlError> {
     let mut reader = reader(source);
     let mut package = Package::default();
     // Metadata text is captured by remembering which element is open.
-    let mut capturing: Option<String> = None;
+    #[derive(Clone, Copy)]
+    enum MetadataField {
+        Title,
+        Creator,
+    }
+    let mut capturing: Option<MetadataField> = None;
 
     loop {
         match reader.read_event()? {
             Event::Start(start) => {
-                let name = local_name(&start);
-                match name.as_str() {
-                    "title" | "creator" => capturing = Some(name),
-                    "item" => push_item(&mut package, &start),
-                    "itemref" => push_itemref(&mut package, &start),
-                    "spine" => package.toc_id = attribute(&start, "toc"),
-                    _ => {}
+                let name = start.name();
+                let name = name.as_ref();
+                if has_local_name(name, b"title") {
+                    capturing = Some(MetadataField::Title);
+                } else if has_local_name(name, b"creator") {
+                    capturing = Some(MetadataField::Creator);
+                } else if has_local_name(name, b"item") {
+                    push_item(&mut package, &start);
+                } else if has_local_name(name, b"itemref") {
+                    push_itemref(&mut package, &start);
+                } else if has_local_name(name, b"spine") {
+                    package.toc_id = attribute(&start, "toc");
                 }
             }
-            Event::Empty(start) => match local_name(&start).as_str() {
-                "item" => push_item(&mut package, &start),
-                "itemref" => push_itemref(&mut package, &start),
-                "spine" => package.toc_id = attribute(&start, "toc"),
-                _ => {}
-            },
+            Event::Empty(start) => {
+                let name = start.name();
+                let name = name.as_ref();
+                if has_local_name(name, b"item") {
+                    push_item(&mut package, &start);
+                } else if has_local_name(name, b"itemref") {
+                    push_itemref(&mut package, &start);
+                } else if has_local_name(name, b"spine") {
+                    package.toc_id = attribute(&start, "toc");
+                }
+            }
             Event::Text(text) => {
-                if let Some(field) = capturing.as_deref() {
+                if let Some(field) = capturing {
                     let value = text.decode().unwrap_or_default().trim().to_owned();
                     if !value.is_empty() {
                         match field {
-                            "title" if package.title.is_none() => package.title = Some(value),
-                            "creator" if package.creator.is_none() => package.creator = Some(value),
+                            MetadataField::Title if package.title.is_none() => {
+                                package.title = Some(value);
+                            }
+                            MetadataField::Creator if package.creator.is_none() => {
+                                package.creator = Some(value);
+                            }
                             _ => {}
                         }
                     }
@@ -232,8 +250,10 @@ pub fn parse_ncx(source: &str) -> Result<Vec<NcxEntry>, XmlError> {
 
     loop {
         match reader.read_event()? {
-            Event::Start(start) => match local_name(&start).as_str() {
-                "navpoint" => {
+            Event::Start(start) => {
+                let name = start.name();
+                let name = name.as_ref();
+                if has_local_name(name, b"navpoint") {
                     let depth = stack.len();
                     stack.push(Pending {
                         depth,
@@ -243,18 +263,17 @@ pub fn parse_ncx(source: &str) -> Result<Vec<NcxEntry>, XmlError> {
                         label: None,
                         href: None,
                     });
-                }
-                "text" => in_label_text = true,
-                "content" => {
+                } else if has_local_name(name, b"text") {
+                    in_label_text = true;
+                } else if has_local_name(name, b"content") {
                     if let (Some(current), Some(src)) = (stack.last_mut(), attribute(&start, "src"))
                     {
                         current.href = Some(src);
                     }
                 }
-                _ => {}
-            },
+            }
             Event::Empty(start) => {
-                if local_name(&start) == "content"
+                if has_local_name(start.name().as_ref(), b"content")
                     && let (Some(current), Some(src)) = (stack.last_mut(), attribute(&start, "src"))
                 {
                     current.href = Some(src);
@@ -272,13 +291,9 @@ pub fn parse_ncx(source: &str) -> Result<Vec<NcxEntry>, XmlError> {
                 }
             }
             Event::End(end) => {
-                let name = local_name(&BytesStart::from_content(
-                    std::str::from_utf8(end.name().as_ref()).unwrap_or_default(),
-                    end.name().as_ref().len(),
-                ));
-                if name == "text" {
+                if has_local_name(end.name().as_ref(), b"text") {
                     in_label_text = false;
-                } else if name == "navpoint"
+                } else if has_local_name(end.name().as_ref(), b"navpoint")
                     && let Some(current) = stack.pop()
                     && let Some(href) = current.href
                 {

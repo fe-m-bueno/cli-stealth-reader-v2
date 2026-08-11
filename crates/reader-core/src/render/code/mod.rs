@@ -64,7 +64,9 @@ impl<'a> LineBuilder<'a> {
     pub(crate) fn new(palette: &'a Palette) -> Self {
         Self {
             palette,
-            line: StyledLine::empty(),
+            // Disguised statements commonly contain 6–10 syntax roles. Most
+            // lines now allocate their span storage once.
+            line: StyledLine::from_spans(Vec::with_capacity(8)),
         }
     }
 
@@ -83,10 +85,10 @@ impl<'a> LineBuilder<'a> {
         self
     }
 
-    /// Append an already-built line, keeping its styling.
-    pub(crate) fn extend(&mut self, other: &StyledLine) -> &mut Self {
-        for span in &other.spans {
-            self.line.push(span.clone());
+    /// Append an already-built line, moving its spans instead of cloning text.
+    pub(crate) fn extend(&mut self, other: StyledLine) -> &mut Self {
+        for span in other.spans {
+            self.line.push(span);
         }
         self
     }
@@ -98,8 +100,8 @@ impl<'a> LineBuilder<'a> {
 
     /// Take the finished line. Consuming the builder avoids cloning every span
     /// on a path that runs once per rendered line.
-    pub(crate) fn build(&mut self) -> StyledLine {
-        std::mem::take(&mut self.line)
+    pub(crate) fn build(self) -> StyledLine {
+        self.line
     }
 }
 
@@ -151,6 +153,20 @@ pub fn render_code(
         CodeLanguage::TypeScript => typescript::render(block, width, palette, block_index, density),
         CodeLanguage::Python => python::render(block, width, palette, block_index),
         CodeLanguage::Rust => rust::render(block, width, palette, block_index),
+    }
+}
+
+/// Number of lines [`render_code`] produces, without building their spans.
+pub(crate) fn line_count(
+    block: &CanonicalBlock,
+    width: usize,
+    block_index: usize,
+    language: CodeLanguage,
+) -> usize {
+    match language {
+        CodeLanguage::TypeScript => typescript::line_count(block, width, block_index),
+        CodeLanguage::Python => python::line_count(block, width, block_index),
+        CodeLanguage::Rust => rust::line_count(block, width, block_index),
     }
 }
 

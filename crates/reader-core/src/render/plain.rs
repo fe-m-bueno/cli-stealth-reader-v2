@@ -9,7 +9,25 @@ use crate::book::CanonicalBlock;
 use crate::style::{Span, Style, StyledLine};
 use crate::theme::Palette;
 
-use super::text::wrap_text;
+use super::text::{wrap_text, wrapped_line_count};
+
+/// Number of lines [`render_plain`] produces, without building styled text.
+pub(crate) fn line_count(block: &CanonicalBlock, width: usize) -> usize {
+    match block {
+        CanonicalBlock::Heading { text, .. } => wrapped_line_count(&text.to_uppercase(), width),
+        CanonicalBlock::Blockquote { text, .. } => {
+            wrapped_line_count(text, width.saturating_sub(2))
+        }
+        CanonicalBlock::ListItem { text, .. } => wrapped_line_count(
+            text,
+            width.saturating_sub(LIST_MARKER.chars().count()).max(1),
+        ),
+        CanonicalBlock::Paragraph { text, .. } | CanonicalBlock::Anchor { text, .. } => {
+            wrapped_line_count(text, width)
+        }
+        CanonicalBlock::SceneBreak { .. } | CanonicalBlock::Image { .. } => 1,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DialogueSpan {
@@ -53,6 +71,12 @@ const QUOTE_PAIRS: [QuotePair; 5] = [
 ];
 
 const DIALOGUE_DASHES: [char; 3] = ['—', '―', '–'];
+
+fn may_contain_dialogue(text: &str) -> bool {
+    text.chars().any(|char| {
+        QUOTE_PAIRS.iter().any(|pair| pair.open == char) || DIALOGUE_DASHES.contains(&char)
+    })
+}
 
 fn is_word_char(value: Option<char>) -> bool {
     value.is_some_and(|char| char.is_alphanumeric() || char == '_')
@@ -175,6 +199,8 @@ fn render_indexed(chars: &[IndexedChar], spans: &[DialogueSpan], palette: &Palet
     let accent = Style::fg(palette.accent);
     let foreground = Style::fg(palette.foreground);
     let mut line = StyledLine::empty();
+    let mut run = String::with_capacity(chars.len());
+    let mut run_style: Option<Style> = None;
     for (position, item) in chars.iter().enumerate() {
         let dialogue = match item.source {
             Some(source) => in_dialogue(source, spans),
@@ -193,10 +219,18 @@ fn render_indexed(chars: &[IndexedChar], spans: &[DialogueSpan], palette: &Palet
                 }
             }
         };
-        line.push(Span::new(
-            item.value.to_string(),
-            if dialogue { accent } else { foreground },
-        ));
+        let style = if dialogue { accent } else { foreground };
+        if run_style.is_some_and(|current| current != style) {
+            line.push(Span::new(
+                std::mem::take(&mut run),
+                run_style.unwrap_or_default(),
+            ));
+        }
+        run_style = Some(style);
+        run.push(item.value);
+    }
+    if !run.is_empty() {
+        line.push(Span::new(run, run_style.unwrap_or(foreground)));
     }
     if line.spans.is_empty() {
         return StyledLine::single("", foreground);
@@ -207,6 +241,9 @@ fn render_indexed(chars: &[IndexedChar], spans: &[DialogueSpan], palette: &Palet
 /// Highlight dialogue on one already-wrapped line.
 #[must_use]
 pub fn highlight_dialogue(line: &str, palette: &Palette) -> StyledLine {
+    if !may_contain_dialogue(line) {
+        return StyledLine::single(line, Style::fg(palette.foreground));
+    }
     let chars: Vec<char> = line.chars().collect();
     let spans = collect_dialogue_spans(&chars);
     let indexed: Vec<IndexedChar> = chars
@@ -224,6 +261,13 @@ pub fn highlight_dialogue(line: &str, palette: &Palette) -> StyledLine {
 #[must_use]
 pub fn wrap_with_dialogue(text: &str, width: usize, palette: &Palette) -> Vec<StyledLine> {
     let width = if width == 0 { 20 } else { width };
+    if !may_contain_dialogue(text) {
+        let foreground = Style::fg(palette.foreground);
+        return wrap_text(text, width)
+            .into_iter()
+            .map(|line| StyledLine::single(line, foreground))
+            .collect();
+    }
     let chars: Vec<char> = text.chars().collect();
     let spans = collect_dialogue_spans(&chars);
 
@@ -245,8 +289,8 @@ pub fn wrap_with_dialogue(text: &str, width: usize, palette: &Palette) -> Vec<St
         return vec![StyledLine::single("", Style::fg(palette.foreground))];
     }
 
-    let mut rendered: Vec<StyledLine> = Vec::new();
-    let mut current: Vec<IndexedChar> = Vec::new();
+    let mut rendered: Vec<StyledLine> = Vec::with_capacity(chars.len() / width + 1);
+    let mut current: Vec<IndexedChar> = Vec::with_capacity(width.min(chars.len()));
     let mut current_width = 0usize;
 
     for (start, end) in words {

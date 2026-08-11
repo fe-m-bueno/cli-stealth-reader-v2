@@ -10,12 +10,21 @@ use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
+fn hex_prefix(bytes: impl AsRef<[u8]>, byte_limit: usize) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+    let bytes = bytes.as_ref();
+    let bytes = &bytes[..bytes.len().min(byte_limit)];
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
 fn hex(bytes: impl AsRef<[u8]>) -> String {
-    bytes
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex_prefix(bytes.as_ref(), usize::MAX)
 }
 
 /// Content hash identifying a file regardless of where it lives.
@@ -30,16 +39,13 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 /// EPUB book id: SHA-1 of the absolute source path.
 #[must_use]
 pub fn epub_book_id(path: &Path) -> String {
-    hex(Sha1::digest(path.display().to_string().as_bytes()))
+    hex(Sha1::digest(path.to_string_lossy().as_bytes()))
 }
 
 /// CBZ and PDF book id: the first 16 hex characters of the path's SHA-256.
 #[must_use]
 pub fn short_book_id(path: &Path) -> String {
-    hex(Sha256::digest(path.display().to_string().as_bytes()))
-        .chars()
-        .take(16)
-        .collect()
+    hex_prefix(Sha256::digest(path.to_string_lossy().as_bytes()), 8)
 }
 
 /// EPUB chapter id: SHA-1 of `<href>:<index>`.
@@ -53,7 +59,7 @@ pub fn chapter_id(href: &str, index: usize) -> String {
 /// This keeps ids stable for a file whose blocks are shared by several chapters.
 #[must_use]
 pub fn block_prefix(key: &str) -> String {
-    hex(Md5::digest(key.as_bytes())).chars().take(8).collect()
+    hex_prefix(Md5::digest(key.as_bytes()), 4)
 }
 
 #[cfg(test)]

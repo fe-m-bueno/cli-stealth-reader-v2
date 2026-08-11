@@ -17,7 +17,67 @@
 //! lot of memory for the two repaints around a chapter boundary.
 
 use reader_core::render::{RenderOptions, render_blocks};
-use reader_core::{AppSettings, Palette, StyledLine};
+use reader_core::{
+    AppSettings, CodeDensity, CodeLanguage, LineSpacing, Palette, RenderMode, StyledLine,
+};
+
+/// Settings that can change rendered text or styling, canonicalized by mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenderBehavior {
+    Plain {
+        highlight_dialogue: bool,
+        line_spacing: LineSpacing,
+    },
+    Code {
+        language: CodeLanguage,
+        /// Only TypeScript uses density; Python and Rust have fixed patterns.
+        density: Option<CodeDensity>,
+        line_spacing: LineSpacing,
+    },
+}
+
+impl From<AppSettings> for RenderBehavior {
+    fn from(settings: AppSettings) -> Self {
+        match settings.render_mode {
+            RenderMode::Plain => Self::Plain {
+                highlight_dialogue: settings.plain_highlight,
+                line_spacing: settings.line_spacing,
+            },
+            RenderMode::Code => Self::Code {
+                language: settings.code_language,
+                density: (settings.code_language == CodeLanguage::TypeScript)
+                    .then_some(settings.code_density),
+                line_spacing: settings.line_spacing,
+            },
+        }
+    }
+}
+
+/// Settings that can change line counts, a narrower key than rendered output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LayoutBehavior {
+    Plain {
+        line_spacing: LineSpacing,
+    },
+    Code {
+        language: CodeLanguage,
+        line_spacing: LineSpacing,
+    },
+}
+
+impl From<AppSettings> for LayoutBehavior {
+    fn from(settings: AppSettings) -> Self {
+        match settings.render_mode {
+            RenderMode::Plain => Self::Plain {
+                line_spacing: settings.line_spacing,
+            },
+            RenderMode::Code => Self::Code {
+                language: settings.code_language,
+                line_spacing: settings.line_spacing,
+            },
+        }
+    }
+}
 
 /// What a cached render was produced for.
 ///
@@ -29,7 +89,7 @@ struct RenderKey {
     book_import_hash: String,
     chapter_index: usize,
     chapter_id: String,
-    settings: AppSettings,
+    behavior: RenderBehavior,
     palette: Palette,
     content_width: u16,
     /// Highlighting changes the spans, so the query is part of the key.
@@ -91,7 +151,7 @@ impl ChapterRenderCache {
                 && key.book_import_hash == request.book_import_hash
                 && key.chapter_index == request.chapter_index
                 && key.chapter_id == request.chapter_id
-                && key.settings == request.settings
+                && key.behavior == RenderBehavior::from(request.settings)
                 && key.palette == *request.palette
                 && key.content_width == request.content_width
                 && key.search_query.as_deref() == request.search_query
@@ -119,7 +179,7 @@ impl ChapterRenderCache {
             book_import_hash: request.book_import_hash.to_owned(),
             chapter_index: request.chapter_index,
             chapter_id: request.chapter_id.to_owned(),
-            settings: request.settings,
+            behavior: RenderBehavior::from(request.settings),
             palette: *request.palette,
             content_width: request.content_width,
             search_query: request.search_query.map(str::to_owned),
@@ -131,7 +191,10 @@ impl ChapterRenderCache {
 
 #[cfg(test)]
 mod tests {
-    use reader_core::{AppSettings, CanonicalBlock, RenderMode, Theme};
+    use reader_core::{
+        AppSettings, CanonicalBlock, CodeDensity, CodeLanguage, ProgressVisibility, RenderMode,
+        Theme,
+    };
 
     use super::{ChapterRenderCache, RenderRequest};
 
@@ -299,6 +362,56 @@ mod tests {
             read(&mut cache, &blocks, settings, &theme, width, None);
         }
         assert_eq!(cache.stats(), (0, 4));
+    }
+
+    #[test]
+    fn settings_irrelevant_to_the_active_renderer_reuse_cached_lines() {
+        let mut cache = ChapterRenderCache::default();
+        let blocks = blocks();
+        let theme = Theme::default();
+        let plain = AppSettings {
+            render_mode: RenderMode::Plain,
+            ..AppSettings::default()
+        };
+        read(&mut cache, &blocks, plain, &theme, 40, None);
+
+        let unrelated = AppSettings {
+            code_language: CodeLanguage::Rust,
+            code_density: CodeDensity::MAX,
+            progress_visibility: ProgressVisibility::Hidden,
+            mouse_capture: !plain.mouse_capture,
+            ..plain
+        };
+        read(&mut cache, &blocks, unrelated, &theme, 40, None);
+
+        assert_eq!(cache.stats(), (1, 1));
+    }
+
+    #[test]
+    fn density_is_not_a_render_input_for_rust_disguise() {
+        let mut cache = ChapterRenderCache::default();
+        let blocks = blocks();
+        let theme = Theme::default();
+        let sparse = AppSettings {
+            render_mode: RenderMode::Code,
+            code_language: CodeLanguage::Rust,
+            code_density: CodeDensity::MIN,
+            ..AppSettings::default()
+        };
+        read(&mut cache, &blocks, sparse, &theme, 40, None);
+        read(
+            &mut cache,
+            &blocks,
+            AppSettings {
+                code_density: CodeDensity::MAX,
+                ..sparse
+            },
+            &theme,
+            40,
+            None,
+        );
+
+        assert_eq!(cache.stats(), (1, 1));
     }
 
     #[test]

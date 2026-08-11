@@ -50,8 +50,13 @@ fn normalize_text(text: &str) -> String {
 
 /// Whether every character is punctuation, a symbol, or a private-use glyph —
 /// the ornaments and dingbats that carry no reading content.
+#[cfg(test)]
 fn is_decorative_text(text: &str) -> bool {
     let normalized = normalize_text(text);
+    is_decorative_normalized(&normalized)
+}
+
+fn is_decorative_normalized(normalized: &str) -> bool {
     if normalized.is_empty() {
         return true;
     }
@@ -74,8 +79,13 @@ fn is_decorative_text(text: &str) -> bool {
 }
 
 /// Whether an `alt` attribute only names the file rather than describing it.
+#[cfg(test)]
 fn is_decorative_image_alt(text: &str) -> bool {
     let normalized = normalize_text(text);
+    is_decorative_image_alt_normalized(&normalized)
+}
+
+fn is_decorative_image_alt_normalized(normalized: &str) -> bool {
     if normalized.is_empty() {
         return true;
     }
@@ -99,9 +109,9 @@ fn is_decorative_image_alt(text: &str) -> bool {
     false
 }
 
-fn tag_name(node: &Handle) -> Option<String> {
+fn tag_name(node: &Handle) -> Option<&str> {
     match &node.data {
-        NodeData::Element { name, .. } => Some(name.local.to_string()),
+        NodeData::Element { name, .. } => Some(name.local.as_ref()),
         _ => None,
     }
 }
@@ -115,34 +125,59 @@ fn attribute(node: &Handle, wanted: &str) -> Option<String> {
         .iter()
         .find(|attribute| {
             // Match on the qualified name so `epub:type` is found by that name.
-            let name = match &attribute.name.prefix {
-                Some(prefix) => format!("{prefix}:{}", attribute.name.local),
-                None => attribute.name.local.to_string(),
-            };
-            name == wanted
+            if attribute.name.local.as_ref() == wanted {
+                return true;
+            }
+            match wanted.split_once(':') {
+                Some((prefix, local)) => {
+                    attribute
+                        .name
+                        .prefix
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.as_ref() == prefix)
+                        && attribute.name.local.as_ref() == local
+                }
+                None => attribute.name.prefix.is_none() && attribute.name.local.as_ref() == wanted,
+            }
         })
         .map(|attribute| attribute.value.to_string())
 }
 
-fn children(node: &Handle) -> Vec<Handle> {
-    node.children.borrow().clone()
+/// Collect and normalize a subtree in one pass, skipping non-content elements.
+fn collect_normalized_text(node: &Handle) -> String {
+    let mut text = String::new();
+    let mut pending_space = false;
+    collect_normalized_text_into(node, &mut text, &mut pending_space);
+    text
 }
 
-/// Concatenate the text of a subtree, turning `<br>` into a newline and skipping
-/// non-content elements.
-fn collect_text(node: &Handle) -> String {
-    if let Some(name) = tag_name(node) {
-        if SKIP_TEXT_TAGS.contains(&name.as_str()) {
-            return String::new();
-        }
-        if name == "br" {
-            return "\n".to_owned();
-        }
+fn collect_normalized_text_into(node: &Handle, text: &mut String, pending_space: &mut bool) {
+    if let Some(name) = tag_name(node)
+        && SKIP_TEXT_TAGS.contains(&name)
+    {
+        return;
+    }
+    if tag_name(node) == Some("br") {
+        *pending_space = !text.is_empty();
+        return;
     }
     if let NodeData::Text { contents } = &node.data {
-        return contents.borrow().to_string();
+        for char in contents.borrow().chars() {
+            if char.is_whitespace() {
+                *pending_space = !text.is_empty();
+                continue;
+            }
+            if *pending_space {
+                text.push(' ');
+                *pending_space = false;
+            }
+            text.push(char);
+        }
+        return;
     }
-    children(node).iter().map(collect_text).collect()
+    for child in node.children.borrow().iter() {
+        collect_normalized_text_into(child, text, pending_space);
+    }
 }
 
 /// Sequential block-id counter, shared across one document.
@@ -178,9 +213,9 @@ fn push_descendant_anchors(
     prefix: &str,
     counter: &mut Counter,
 ) {
-    for child in children(node) {
-        push_anchor(blocks, &child, prefix, counter);
-        push_descendant_anchors(blocks, &child, prefix, counter);
+    for child in node.children.borrow().iter() {
+        push_anchor(blocks, child, prefix, counter);
+        push_descendant_anchors(blocks, child, prefix, counter);
     }
 }
 
@@ -188,14 +223,14 @@ fn visit(node: &Handle, blocks: &mut Vec<CanonicalBlock>, prefix: &str, counter:
     let Some(name) = tag_name(node) else {
         return;
     };
-    if SKIP_TEXT_TAGS.contains(&name.as_str()) {
+    if SKIP_TEXT_TAGS.contains(&name) {
         return;
     }
     push_anchor(blocks, node, prefix, counter);
 
-    if !BLOCK_NAMES.contains(&name.as_str()) {
-        for child in children(node) {
-            visit(&child, blocks, prefix, counter);
+    if !BLOCK_NAMES.contains(&name) {
+        for child in node.children.borrow().iter() {
+            visit(child, blocks, prefix, counter);
         }
         return;
     }
@@ -204,7 +239,7 @@ fn visit(node: &Handle, blocks: &mut Vec<CanonicalBlock>, prefix: &str, counter:
 
     if name == "img" {
         let alt = normalize_text(&attribute(node, "alt").unwrap_or_default());
-        if is_decorative_image_alt(&alt) {
+        if is_decorative_image_alt_normalized(&alt) {
             return;
         }
         blocks.push(CanonicalBlock::Image {
@@ -222,12 +257,12 @@ fn visit(node: &Handle, blocks: &mut Vec<CanonicalBlock>, prefix: &str, counter:
         return;
     }
 
-    let text = normalize_text(&collect_text(node));
-    if is_decorative_text(&text) {
+    let text = collect_normalized_text(node);
+    if is_decorative_normalized(&text) {
         return;
     }
     let id = format!("{prefix}-block-{}", counter.next());
-    blocks.push(match name.as_str() {
+    blocks.push(match name {
         "blockquote" => CanonicalBlock::Blockquote { id, text },
         "li" => CanonicalBlock::ListItem { id, text },
         heading if heading.starts_with('h') => CanonicalBlock::Heading {
@@ -244,9 +279,11 @@ fn parse_html(source: &str) -> RcDom {
 }
 
 fn find_child(node: &Handle, wanted: &str) -> Option<Handle> {
-    children(node)
-        .into_iter()
-        .find(|child| tag_name(child).is_some_and(|name| name == wanted))
+    node.children
+        .borrow()
+        .iter()
+        .find(|child| tag_name(child) == Some(wanted))
+        .cloned()
 }
 
 /// The `<body>`, falling back to `<html>` and then the document itself, so a
@@ -269,8 +306,8 @@ pub fn extract_blocks_from_html(source: &str, prefix: &str) -> Vec<CanonicalBloc
     let mut blocks: Vec<CanonicalBlock> = Vec::new();
     // v1 started its counter at 1.
     let mut counter = Counter(1);
-    for child in children(&body) {
-        visit(&child, &mut blocks, prefix, &mut counter);
+    for child in body.children.borrow().iter() {
+        visit(child, &mut blocks, prefix, &mut counter);
     }
     blocks
 }
@@ -285,7 +322,7 @@ pub struct NavEntry {
 }
 
 fn find_nav_toc(node: &Handle) -> Option<Handle> {
-    if tag_name(node).is_some_and(|name| name == "nav") {
+    if tag_name(node) == Some("nav") {
         let epub_type = attribute(node, "epub:type")
             .or_else(|| attribute(node, "type"))
             .unwrap_or_default();
@@ -294,13 +331,13 @@ fn find_nav_toc(node: &Handle) -> Option<Handle> {
             return Some(node.clone());
         }
     }
-    children(node).iter().find_map(find_nav_toc)
+    node.children.borrow().iter().find_map(find_nav_toc)
 }
 
 fn collect_nav(node: &Handle, depth: usize, items: &mut Vec<NavEntry>) {
-    if tag_name(node).is_some_and(|name| name == "a") {
+    if tag_name(node) == Some("a") {
         if let Some(href) = attribute(node, "href") {
-            let label = normalize_text(&collect_text(node));
+            let label = collect_normalized_text(node);
             items.push(NavEntry {
                 href,
                 label: if label.is_empty() {
@@ -313,10 +350,10 @@ fn collect_nav(node: &Handle, depth: usize, items: &mut Vec<NavEntry>) {
         }
         return;
     }
-    let is_list_item = tag_name(node).is_some_and(|name| name == "li");
-    for child in children(node) {
-        let nested = is_list_item && tag_name(&child).is_some_and(|name| name == "ol");
-        collect_nav(&child, if nested { depth + 1 } else { depth }, items);
+    let is_list_item = tag_name(node) == Some("li");
+    for child in node.children.borrow().iter() {
+        let nested = is_list_item && tag_name(child) == Some("ol");
+        collect_nav(child, if nested { depth + 1 } else { depth }, items);
     }
 }
 

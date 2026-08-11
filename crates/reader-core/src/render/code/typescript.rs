@@ -13,6 +13,7 @@ use crate::theme::Palette;
 
 use super::super::text::{
     esc, extract_words, line_hash, to_func_name, to_type_name, to_var_name, wrap_text,
+    wrapped_line_count,
 };
 use super::{LineBuilder, Role, block_text, comment_line, render_structural};
 
@@ -22,6 +23,47 @@ use super::{LineBuilder, Role, block_text, comment_line, render_structural};
 /// ` = { ...state, ` (15) + key (5) + `: "";` (6) = 42, plus four columns of
 /// slack for escaped quotes.
 const TEXT_OVERHEAD: usize = 46;
+
+pub(super) fn line_count(block: &CanonicalBlock, width: usize, block_index: usize) -> usize {
+    if block_text(block).is_none() {
+        return 1;
+    }
+    let text = block.text();
+    let text_width = width.saturating_sub(TEXT_OVERHEAD).max(20);
+    if block_index % 41 == 0 {
+        return wrapped_line_count(text, text_width.saturating_sub(2)) + 3;
+    }
+    if block_index % 43 == 0 {
+        return wrapped_line_count(text, text_width.saturating_sub(2)) + 2;
+    }
+    if block_index % 47 == 0 {
+        return wrapped_line_count(text, text_width.saturating_sub(2)) + 3;
+    }
+
+    let structural = if block_index % 13 == 0 || block_index % 17 == 0 {
+        1
+    } else if block_index % 19 == 0 {
+        4
+    } else if block_index % 23 == 0 || block_index % 29 == 0 {
+        1
+    } else if block_index % 31 == 0 {
+        2
+    } else if block_index % 37 == 0 {
+        1
+    } else {
+        0
+    };
+    let inner_width = if structural == 0 {
+        text_width
+    } else {
+        text_width.saturating_sub(4).max(20)
+    };
+    let closes_scope = matches!(block_index, index if index % 23 == 0
+        || index % 29 == 0
+        || index % 31 == 0
+        || index % 37 == 0);
+    structural + wrapped_line_count(text, inner_width) + usize::from(closes_scope)
+}
 
 type Pattern = fn(&str, &[&str], usize, &Palette) -> StyledLine;
 
@@ -323,7 +365,7 @@ fn body_lines(
             let nested = line_hash(block_index, line_index + 50) % 3 == 0;
             let indent = if nested { "    " } else { base_indent };
             let mut builder = LineBuilder::indented(palette, indent);
-            builder.extend(&disguise_line(
+            builder.extend(disguise_line(
                 line,
                 block_index,
                 line_index,

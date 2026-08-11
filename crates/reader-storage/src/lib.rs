@@ -18,7 +18,7 @@ pub mod paths;
 use std::path::Path;
 
 use reader_core::{
-    BookReadingPace, Bookmark, CanonicalBlock, CanonicalBook, CanonicalChapter, DiagnosticSeverity,
+    BookReadingPace, Bookmark, CanonicalBook, CanonicalChapter, DiagnosticSeverity,
     ImportDiagnostic, LibraryEntry, LibraryEntryWithProgress, LibrarySortKey, Note,
     ReadingPosition, RenderMode, SortDirection,
 };
@@ -325,15 +325,15 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?;
 
         let transaction = self.connection.transaction()?;
+        let mut update = transaction
+            .prepare_cached("UPDATE command_history SET raw_command = ? WHERE id = ?")?;
         for (id, raw_command, normalized_name) in rows {
             let redacted = redact_sensitive_command(&raw_command, &normalized_name);
             if redacted != raw_command {
-                transaction.execute(
-                    "UPDATE command_history SET raw_command = ? WHERE id = ?",
-                    params![redacted, id],
-                )?;
+                update.execute(params![redacted, id])?;
             }
         }
+        drop(update);
         transaction.commit()?;
         Ok(())
     }
@@ -342,12 +342,12 @@ impl Storage {
     fn seed_settings(&mut self) -> Result<()> {
         let defaults = reader_core::AppSettings::default();
         let transaction = self.connection.transaction()?;
+        let mut insert = transaction
+            .prepare_cached("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")?;
         for (key, value) in defaults.entries() {
-            transaction.execute(
-                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                params![key, value],
-            )?;
+            insert.execute(params![key, value])?;
         }
+        drop(insert);
         transaction.commit()?;
         Ok(())
     }
@@ -402,13 +402,14 @@ impl Storage {
     /// previous configuration intact.
     pub fn save_settings(&mut self, settings: &reader_core::AppSettings) -> Result<()> {
         let transaction = self.connection.transaction()?;
+        let mut upsert = transaction.prepare_cached(
+            "INSERT INTO settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )?;
         for (key, value) in settings.entries() {
-            transaction.execute(
-                "INSERT INTO settings (key, value) VALUES (?, ?)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![key, value],
-            )?;
+            upsert.execute(params![key, value])?;
         }
+        drop(upsert);
         transaction.commit()?;
         Ok(())
     }
@@ -420,7 +421,7 @@ impl Storage {
     fn renamed_book_id(&self, book: &CanonicalBook) -> Result<Option<String>> {
         let candidates: Vec<(String, String)> = self
             .connection
-            .prepare(
+            .prepare_cached(
                 "SELECT id, source_path FROM books
                  WHERE import_hash = ? AND id != ?
                  ORDER BY last_opened_at DESC",
@@ -450,7 +451,7 @@ impl Storage {
             .renamed_book_id(book)?
             .unwrap_or_else(|| book.id.clone());
         let transaction = self.connection.transaction()?;
-        transaction.execute(
+        transaction.prepare_cached(
             "INSERT INTO books (id, title, author, source_path, import_hash, parser_version, last_opened_at, render_mode)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
@@ -461,7 +462,7 @@ impl Storage {
                parser_version = excluded.parser_version,
                last_opened_at = excluded.last_opened_at,
                render_mode = excluded.render_mode",
-            params![
+        )?.execute(params![
                 book_id,
                 book.title,
                 book.author,
@@ -470,25 +471,27 @@ impl Storage {
                 book.parser_version.unwrap_or(CURRENT_EPUB_PARSER_VERSION),
                 now,
                 render_mode.as_str(),
-            ],
-        )?;
-        transaction.execute("DELETE FROM chapters WHERE book_id = ?", params![book_id])?;
-        transaction.execute(
-            "DELETE FROM diagnostics WHERE book_id = ?",
-            params![book_id],
-        )?;
+            ])?;
+        transaction
+            .prepare_cached("DELETE FROM chapters WHERE book_id = ?")?
+            .execute(params![book_id])?;
+        transaction
+            .prepare_cached("DELETE FROM diagnostics WHERE book_id = ?")?
+            .execute(params![book_id])?;
 
-        for chapter in &book.chapters {
-            let blocks = serde_json::to_string(&chapter.blocks).map_err(|error| {
-                StorageError::CorruptBlocks {
-                    chapter_id: chapter.id.clone(),
-                    detail: error.to_string(),
-                }
-            })?;
-            transaction.execute(
+        {
+            let mut insert_chapter = transaction.prepare_cached(
                 "INSERT INTO chapters (id, book_id, chapter_index, title, href, depth, word_count, blocks_json)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
+            )?;
+            for chapter in &book.chapters {
+                let blocks = serde_json::to_string(&chapter.blocks).map_err(|error| {
+                    StorageError::CorruptBlocks {
+                        chapter_id: chapter.id.clone(),
+                        detail: error.to_string(),
+                    }
+                })?;
+                insert_chapter.execute(params![
                     chapter.id,
                     book_id,
                     from_index(chapter.index),
@@ -497,19 +500,21 @@ impl Storage {
                     from_index(chapter.depth),
                     from_index(chapter.word_count),
                     blocks,
-                ],
-            )?;
+                ])?;
+            }
         }
-        for diagnostic in &book.diagnostics {
-            transaction.execute(
+        {
+            let mut insert_diagnostic = transaction.prepare_cached(
                 "INSERT INTO diagnostics (book_id, severity, message, context) VALUES (?, ?, ?, ?)",
-                params![
+            )?;
+            for diagnostic in &book.diagnostics {
+                insert_diagnostic.execute(params![
                     book_id,
                     severity_name(diagnostic.severity),
                     diagnostic.message,
                     diagnostic.context,
-                ],
-            )?;
+                ])?;
+            }
         }
         transaction.commit()?;
         Ok(book_id)
@@ -519,68 +524,57 @@ impl Storage {
     pub fn book(&self, book_id: &str) -> Result<Option<CanonicalBook>> {
         let header = self
             .connection
-            .query_row(
+            .prepare_cached(
                 "SELECT id, title, author, source_path, import_hash, parser_version
                  FROM books WHERE id = ?",
-                params![book_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, Option<u32>>(5)?,
-                    ))
-                },
-            )
+            )?
+            .query_row(params![book_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<u32>>(5)?,
+                ))
+            })
             .optional()?;
         let Some((id, title, author, source_path, import_hash, parser_version)) = header else {
             return Ok(None);
         };
 
-        let chapters = self
-            .connection
-            .prepare(
+        let chapters = {
+            let mut statement = self.connection.prepare_cached(
                 "SELECT id, chapter_index, title, href, depth, word_count, blocks_json
                  FROM chapters WHERE book_id = ? ORDER BY chapter_index ASC",
-            )?
-            .query_map(params![book_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    to_index(row.get(1)?),
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    to_index(row.get(4)?),
-                    to_index(row.get(5)?),
-                    row.get::<_, String>(6)?,
-                ))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .map(|(id, index, title, href, depth, word_count, blocks_json)| {
-                let blocks: Vec<CanonicalBlock> =
-                    serde_json::from_str(&blocks_json).map_err(|error| {
-                        StorageError::CorruptBlocks {
-                            chapter_id: id.clone(),
-                            detail: error.to_string(),
-                        }
-                    })?;
-                Ok(CanonicalChapter {
+            )?;
+            let mut rows = statement.query(params![book_id])?;
+            let mut chapters = Vec::new();
+            while let Some(row) = rows.next()? {
+                let id: String = row.get(0)?;
+                let blocks_json: String = row.get(6)?;
+                let blocks = serde_json::from_str(&blocks_json).map_err(|error| {
+                    StorageError::CorruptBlocks {
+                        chapter_id: id.clone(),
+                        detail: error.to_string(),
+                    }
+                })?;
+                chapters.push(CanonicalChapter {
                     id,
-                    index,
-                    title,
-                    href,
-                    depth,
+                    index: to_index(row.get(1)?),
+                    title: row.get(2)?,
+                    href: row.get(3)?,
+                    depth: to_index(row.get(4)?),
+                    word_count: to_index(row.get(5)?),
                     blocks,
-                    word_count,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+                });
+            }
+            chapters
+        };
 
         let diagnostics = self
             .connection
-            .prepare("SELECT severity, message, context FROM diagnostics WHERE book_id = ?")?
+            .prepare_cached("SELECT severity, message, context FROM diagnostics WHERE book_id = ?")?
             .query_map(params![book_id], |row| {
                 Ok(ImportDiagnostic {
                     severity: parse_severity(&row.get::<_, String>(0)?),
@@ -665,7 +659,7 @@ impl Storage {
             .collect::<rusqlite::Result<_>>()?;
 
         if let Some(tag) = tag_filter {
-            let tagged: Vec<String> = self
+            let tagged: std::collections::HashSet<String> = self
                 .connection
                 .prepare("SELECT book_id FROM book_tags WHERE LOWER(tag) = LOWER(?)")?
                 .query_map(params![tag], |row| row.get(0))?
@@ -733,7 +727,11 @@ impl Storage {
 
     /// Save the reading position and mark the book as opened now.
     pub fn save_position(&self, book_id: &str, position: ReadingPosition, now: i64) -> Result<()> {
-        self.connection.execute(
+        // `unchecked_transaction` only relaxes Rust's exclusive-borrow check;
+        // SQLite still rejects accidental nesting. This method is a public,
+        // top-level write and keeping both rows atomic is worth that tradeoff.
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.prepare_cached(
             "INSERT INTO positions (book_id, chapter_index, chapter_progress, book_progress, block_offset)
              VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(book_id) DO UPDATE SET
@@ -741,18 +739,17 @@ impl Storage {
                chapter_progress = excluded.chapter_progress,
                book_progress = excluded.book_progress,
                block_offset = excluded.block_offset",
-            params![
+        )?.execute(params![
                 book_id,
                 from_index(position.chapter_index),
                 position.chapter_progress,
                 position.book_progress,
                 from_index(position.block_offset),
-            ],
-        )?;
-        self.connection.execute(
-            "UPDATE books SET last_opened_at = ? WHERE id = ?",
-            params![now, book_id],
-        )?;
+            ])?;
+        transaction
+            .prepare_cached("UPDATE books SET last_opened_at = ? WHERE id = ?")?
+            .execute(params![now, book_id])?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -935,12 +932,13 @@ impl Storage {
     pub fn tags_by_book(&self) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
         let mut map: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
-        let rows: Vec<(String, String)> = self
+        let mut statement = self
             .connection
-            .prepare("SELECT book_id, tag FROM book_tags ORDER BY book_id, tag")?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        for (book_id, tag) in rows {
+            .prepare_cached("SELECT book_id, tag FROM book_tags ORDER BY book_id, tag")?;
+        let mut rows = statement.query([])?;
+        while let Some(row) = rows.next()? {
+            let book_id: String = row.get(0)?;
+            let tag: String = row.get(1)?;
             map.entry(book_id).or_default().push(tag);
         }
         Ok(map)

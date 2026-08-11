@@ -131,6 +131,22 @@ fn chapter_navigation_is_bounded_and_recorded() {
 }
 
 #[test]
+fn chapter_navigation_reuses_whole_book_layout_metrics() {
+    let (mut state, mut storage) = reader();
+    let _ = state.chapter_line_count(CONTEXT.content_width, CONTEXT.body_height);
+    let (hits_before, misses_before) = state.layout_metrics_cache_stats();
+
+    run(&mut state, &mut storage, "/next");
+    let _ = state.chapter_line_count(CONTEXT.content_width, CONTEXT.body_height);
+
+    assert_eq!(
+        state.layout_metrics_cache_stats(),
+        (hits_before + 1, misses_before),
+        "moving between chapters must not render every chapter again"
+    );
+}
+
+#[test]
 fn navigation_without_a_book_does_nothing() {
     let (mut state, mut storage) = empty_reader();
     run(&mut state, &mut storage, "/next");

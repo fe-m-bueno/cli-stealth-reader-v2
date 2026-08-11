@@ -284,7 +284,7 @@ pub fn entries(state: &ReaderState, storage: &Storage, now: i64) -> Vec<OverlayE
 /// not empty the list.
 #[must_use]
 pub fn filter(rows: Vec<OverlayEntry>, query: &str) -> Vec<OverlayEntry> {
-    fuzzy::filter(query.trim(), rows, |entry| entry.search.clone())
+    fuzzy::filter(query.trim(), rows, |entry| entry.search.as_str())
 }
 
 /// The rows the overlay should show right now.

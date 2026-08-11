@@ -75,8 +75,7 @@ pub fn open_book(
     state.search = None;
     state.nav_history.clear();
     state.nav_history_cursor = None;
-    state.invalidate_layout();
-    state.clear_render_cache();
+    state.clear_render_caches();
     load_pace(state, storage, &book.id)?;
     state.current_book = Some(book);
     state.clamp_offset(context.content_width, context.body_height);
@@ -154,7 +153,6 @@ pub fn import_and_open(
 /// Move the reader to a search hit, scrolling the block into view.
 pub fn apply_search_hit(state: &mut ReaderState, hit: SearchHit, context: CommandContext) {
     state.chapter_index = hit.chapter_index;
-    state.invalidate_layout();
     let line_start = state.focus_index_to_offset(context.content_width, hit.block_index);
     let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
     state.block_offset = line_start.min(max_offset);
@@ -350,7 +348,6 @@ fn dispatch(
                 (state.chapter_index + count).min(state.chapter_count().saturating_sub(1))
             };
             state.block_offset = 0;
-            state.invalidate_layout();
             state.push_nav_history();
             state.status = format!("Moved to chapter {}", state.chapter_index + 1);
             Ok(())
@@ -487,7 +484,6 @@ fn dispatch(
                     state.status = format!("Render mode: {}", language.as_str());
                 }
             }
-            state.invalidate_layout();
             Ok(())
         }
 
@@ -502,7 +498,6 @@ fn dispatch(
             };
             state.settings.code_density = density;
             storage.set_setting("codeDensity", &density.get().to_string())?;
-            state.invalidate_layout();
             state.status = format!("Code density: {}", density.get());
             Ok(())
         }
@@ -519,7 +514,6 @@ fn dispatch(
             let enabled = value == "on";
             state.settings.plain_highlight = enabled;
             storage.set_setting("plainHighlight", &enabled.to_string())?;
-            state.invalidate_layout();
             state.status = format!("Dialogue highlight: {}", if enabled { "on" } else { "off" });
             Ok(())
         }
@@ -581,7 +575,6 @@ fn dispatch(
             };
             state.settings.theme_id = scheme;
             state.refresh_theme();
-            state.invalidate_layout();
             storage.set_setting("themeId", scheme.as_str())?;
             state.status = format!("Colorscheme set to {}", scheme.label());
             Ok(())
@@ -603,7 +596,6 @@ fn dispatch(
             };
             state.settings.appearance_theme_id = appearance;
             state.refresh_theme();
-            state.invalidate_layout();
             storage.set_setting("appearanceThemeId", appearance.as_str())?;
             state.status = format!("Theme set to {}", appearance.label());
             Ok(())
@@ -649,7 +641,7 @@ fn dispatch(
             storage.remove_book(&book_id)?;
             state.current_book = None;
             state.search = None;
-            state.invalidate_layout();
+            state.clear_render_caches();
             state.status = "Current book removed from the library.".to_owned();
             Ok(())
         }
@@ -662,7 +654,7 @@ fn dispatch(
                 storage.remove_book(&book_id)?;
                 state.current_book = None;
                 state.search = None;
-                state.invalidate_layout();
+                state.clear_render_caches();
                 state.status = "Current book removed from the library.".to_owned();
                 return Ok(());
             }
@@ -679,7 +671,7 @@ fn dispatch(
             if state.book_id() == Some(matched.id.as_str()) {
                 state.current_book = None;
                 state.search = None;
-                state.invalidate_layout();
+                state.clear_render_caches();
             }
             state.status = format!("Removed {} from the library.", matched.title);
             Ok(())
@@ -768,7 +760,6 @@ fn goto(
             state.push_nav_history();
             state.chapter_index = 0;
             state.block_offset = 0;
-            state.invalidate_layout();
             state.push_nav_history();
             state.status = "Jumped to 0% (start of book)".to_owned();
             return Ok(());
@@ -776,7 +767,6 @@ fn goto(
         if percent >= 100.0 {
             state.push_nav_history();
             state.chapter_index = last_chapter;
-            state.invalidate_layout();
             state.block_offset =
                 state.chapter_max_offset(context.content_width, context.body_height);
             state.push_nav_history();
@@ -803,7 +793,6 @@ fn goto(
             chapter_index += 1;
         }
         state.chapter_index = chapter_index;
-        state.invalidate_layout();
         let chapter_weight = weights[chapter_index] as f64;
         let local = (target - accumulated).clamp(0.0, chapter_weight);
         let ratio = if chapter_weight > 0.0 {
@@ -833,7 +822,6 @@ fn goto(
         state.push_nav_history();
         state.chapter_index = number - 1;
         state.block_offset = 0;
-        state.invalidate_layout();
         state.push_nav_history();
         state.status = format!("Jumped to chapter {number}");
         return Ok(());

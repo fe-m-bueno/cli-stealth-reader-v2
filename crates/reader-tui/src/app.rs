@@ -246,7 +246,6 @@ fn event_loop(
             }
             Event::Resize(width, height) => {
                 state.viewport = reader_app::Viewport::new(width, height);
-                state.invalidate_layout();
             }
             _ => {}
         }
