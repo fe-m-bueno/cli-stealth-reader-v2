@@ -14,3 +14,6 @@ reader-storage.workspace = true
 
 ratatui.workspace = true
 crossterm.workspace = true
+
+[dev-dependencies]
+reader-formats.workspace = true

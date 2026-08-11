@@ -8,3 +8,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+reader-app.workspace = true
+reader-core.workspace = true
+reader-formats.workspace = true
+reader-storage.workspace = true
+reader-tui.workspace = true
+
+clap.workspace = true

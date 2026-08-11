@@ -1,9 +1,13 @@
 //! SQLite-backed library storage.
 //!
-//! The schema is byte-compatible with v1: the same tables, columns, and indexes,
-//! so both implementations can open the same `library.db` during the beta. Write
-//! paths that touch several tables run in one transaction, because a half-saved
-//! book or a half-saved settings page is worse than a failed one.
+//! The schema keeps v1's tables and columns, so both implementations can open the
+//! same `library.db` during the beta. It differs in two ways, both applied to an
+//! existing database on open and both invisible to v1: `chapters` is keyed per
+//! book rather than globally, and four missing indexes are added. See
+//! `docs/migration/improvements.md`.
+//!
+//! Write paths that touch several tables run in one transaction, because a
+//! half-saved book or a half-saved settings page is worse than a failed one.
 //!
 //! Timestamps are passed in rather than read from the clock, which keeps the
 //! storage layer deterministic under test.

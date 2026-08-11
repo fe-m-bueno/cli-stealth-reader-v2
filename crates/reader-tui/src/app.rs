@@ -1,0 +1,215 @@
+//! The terminal lifecycle and event loop.
+//!
+//! This is the only module that talks to a real terminal, so it stays thin: set
+//! the terminal up, read an event, map it, apply it, draw, repeat. Everything it
+//! calls is testable without a TTY.
+//!
+//! The terminal is always restored, including on a panic, because leaving a user
+//! in raw mode with a hidden cursor is worse than the crash itself.
+
+use std::io;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use reader_app::{CommandContext, ReaderState, persist_pace};
+use reader_storage::Storage;
+
+use crate::actions::{apply, current_mode};
+use crate::frame::{CommandBar, draw, footer_height};
+use crate::input::{Action, SCROLL_STEP, map_key};
+
+/// How long to wait for an event before redrawing anyway.
+const TICK: Duration = Duration::from_millis(250);
+
+/// The reader could not run.
+#[derive(Debug)]
+pub enum AppError {
+    Terminal(io::Error),
+    Execution(reader_app::ExecutionError),
+    Storage(reader_storage::StorageError),
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Terminal(error) => write!(formatter, "terminal error: {error}"),
+            Self::Execution(error) => write!(formatter, "{error}"),
+            Self::Storage(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for AppError {}
+
+impl From<io::Error> for AppError {
+    fn from(error: io::Error) -> Self {
+        Self::Terminal(error)
+    }
+}
+
+impl From<reader_app::ExecutionError> for AppError {
+    fn from(error: reader_app::ExecutionError) -> Self {
+        Self::Execution(error)
+    }
+}
+
+impl From<reader_storage::StorageError> for AppError {
+    fn from(error: reader_storage::StorageError) -> Self {
+        Self::Storage(error)
+    }
+}
+
+/// Milliseconds since the Unix epoch.
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as i64)
+}
+
+/// Restore the terminal, ignoring errors: this runs on the way out, including
+/// during a panic, and there is nothing useful left to do with a failure.
+fn restore_terminal(mouse_capture: bool) {
+    let mut out = io::stdout();
+    if mouse_capture {
+        let _ = execute!(out, DisableMouseCapture);
+    }
+    let _ = execute!(out, LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+}
+
+/// Run the reader until it is told to quit.
+pub fn run(state: &mut ReaderState, storage: &mut Storage) -> Result<(), AppError> {
+    enable_raw_mode()?;
+    let mut out = io::stdout();
+    execute!(out, EnterAlternateScreen)?;
+    let mut mouse_captured = state.settings.mouse_capture;
+    if mouse_captured {
+        execute!(out, EnableMouseCapture)?;
+    }
+
+    // A panic must not leave the terminal in raw mode.
+    let previous_hook = std::panic::take_hook();
+    let hook_mouse = mouse_captured;
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal(hook_mouse);
+        previous_hook(info);
+    }));
+
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut command_bar = CommandBar::default();
+    let result = event_loop(
+        &mut terminal,
+        state,
+        storage,
+        &mut command_bar,
+        &mut mouse_captured,
+    );
+
+    // The pace model is only worth keeping if the session actually read something.
+    persist_pace(state, storage, now_millis());
+    save_position(state, storage);
+
+    let _ = std::panic::take_hook();
+    restore_terminal(mouse_captured);
+    let _ = terminal.show_cursor();
+    result
+}
+
+/// Write the reading position, so the next start resumes here.
+fn save_position(state: &mut ReaderState, storage: &Storage) {
+    let Some(book_id) = state.book_id().map(str::to_owned) else {
+        return;
+    };
+    let layout = state.layout(1);
+    let chapter_progress = state.chapter_progress(layout.content_width, layout.body_height);
+    let book_progress = state.book_progress(layout.content_width, layout.body_height);
+    let _ = storage.save_position(
+        &book_id,
+        reader_core::ReadingPosition {
+            chapter_index: state.chapter_index,
+            chapter_progress,
+            book_progress,
+            block_offset: state.block_offset,
+        },
+        now_millis(),
+    );
+}
+
+/// The concrete terminal the reader drives. Tests exercise `draw`, `map_key`,
+/// and `apply` directly, so the loop does not need to be generic over backends.
+type ReaderTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+
+fn event_loop(
+    terminal: &mut ReaderTerminal,
+    state: &mut ReaderState,
+    storage: &mut Storage,
+    command_bar: &mut CommandBar,
+    mouse_captured: &mut bool,
+) -> Result<(), AppError> {
+    while !state.should_quit {
+        terminal.draw(|frame| draw(frame, state, command_bar))?;
+
+        // Mouse capture follows the setting, which a command can change.
+        if state.settings.mouse_capture != *mouse_captured {
+            *mouse_captured = state.settings.mouse_capture;
+            if *mouse_captured {
+                execute!(terminal.backend_mut(), EnableMouseCapture)?;
+            } else {
+                execute!(terminal.backend_mut(), DisableMouseCapture)?;
+            }
+        }
+
+        if !event::poll(TICK)? {
+            continue;
+        }
+        let layout = state.layout(footer_height(command_bar));
+        let context = CommandContext {
+            now: now_millis(),
+            content_width: layout.content_width,
+            body_height: layout.body_height,
+        };
+
+        match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                let action = map_key(key, current_mode(state, command_bar));
+                apply(action, state, storage, command_bar, context)?;
+            }
+            Event::Mouse(mouse) => {
+                let action = match mouse.kind {
+                    MouseEventKind::ScrollDown => Action::ScrollDown(SCROLL_STEP * 3),
+                    MouseEventKind::ScrollUp => Action::ScrollUp(SCROLL_STEP * 3),
+                    _ => Action::Ignore,
+                };
+                apply(action, state, storage, command_bar, context)?;
+            }
+            Event::Resize(width, height) => {
+                state.viewport = reader_app::Viewport::new(width, height);
+                state.invalidate_layout();
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::now_millis;
+
+    #[test]
+    fn the_clock_returns_a_plausible_epoch_millisecond_value() {
+        // Sanity check that the conversion is not off by orders of magnitude:
+        // any time after 2020 and before 2100.
+        let now = now_millis();
+        assert!(now > 1_577_836_800_000, "{now} is before 2020");
+        assert!(now < 4_102_444_800_000, "{now} is after 2100");
+    }
+}
