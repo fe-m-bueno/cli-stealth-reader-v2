@@ -47,6 +47,16 @@ fn now_millis() -> i64 {
 }
 
 fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    // The reader is a full-screen application, so a redirected or piped session
+    // cannot work. Saying so plainly beats an errno from deep inside the
+    // terminal setup.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return Err(
+            "stdout is not a terminal. stealth-reader needs an interactive terminal to draw in."
+                .into(),
+        );
+    }
+
     let paths = AppPaths::from_env();
     let mut storage = Storage::open(&paths)?;
     let settings = storage.settings()?;
