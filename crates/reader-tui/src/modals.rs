@@ -215,9 +215,12 @@ fn draw_search_row(frame: &mut Frame<'_>, area: Rect, state: &ReaderState, spec:
             ),
         ]
     } else {
+        // `subtle` is the colour of text meant to recede behind the modal; a
+        // prompt the reader has to read needs `dim`, which every palette keeps
+        // legible against its own background.
         vec![Span::styled(
             spec.placeholder.to_owned(),
-            to_tui_style(Style::fg(palette.subtle)),
+            to_tui_style(Style::fg(palette.dim)),
         )]
     };
     frame.render_widget(Paragraph::new(Line::from(spans)), area);

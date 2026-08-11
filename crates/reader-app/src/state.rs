@@ -658,6 +658,19 @@ impl ReaderState {
         counts[..index].iter().sum()
     }
 
+    /// Where the focused block starts and how many rendered lines it takes.
+    ///
+    /// This is what focus mode draws around: the span is highlighted and
+    /// centered, and everything outside it is dimmed.
+    #[must_use]
+    pub fn focus_block_span(&mut self, content_width: u16) -> Option<(usize, usize)> {
+        let index = self.clamp_focus_index(self.focus_block_index);
+        let counts = self.focus_line_counts(content_width);
+        let length = *counts.get(index)?;
+        let start = counts[..index].iter().sum();
+        Some((start, length))
+    }
+
     /// The block containing the line at `block_offset`.
     #[must_use]
     pub fn offset_to_focus_index(&mut self, content_width: u16, block_offset: usize) -> usize {

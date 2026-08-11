@@ -226,9 +226,10 @@ fn search_box(state: &ReaderState, palette: &Palette, inner: usize) -> Vec<Line<
     } else {
         vec![
             Span::styled("⌕ ", to_tui_style(Style::fg(palette.dim))),
+            // `dim`, not `subtle`: a prompt has to be readable on every palette.
             Span::styled(
                 pad("Search settings...", inner.saturating_sub(2)),
-                to_tui_style(Style::fg(palette.subtle)),
+                to_tui_style(Style::fg(palette.dim)),
             ),
         ]
     };

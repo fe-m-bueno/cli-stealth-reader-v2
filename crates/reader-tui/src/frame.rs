@@ -250,11 +250,16 @@ fn footer_hints(state: &ReaderState, command_bar: &CommandBar) -> String {
         Overlay::Keys if state.overlay_search.active => {
             hints(&[("Esc", "exit search"), ("Esc Esc", "close")])
         }
-        Overlay::Keys => hints(&[("Esc", "close"), ("/", "search"), ("Ctrl+.", "close")]),
+        Overlay::Keys => hints(&[
+            ("Enter/click", "run"),
+            ("/", "search"),
+            ("z", "fold all"),
+            ("Esc", "close"),
+        ]),
         Overlay::None if state.focus_mode => hints(&[
+            ("j/k", "block"),
             ("Esc", "exit focus"),
             ("/", "commands"),
-            ("Ctrl+.", "shortcuts"),
             ("q", "quit"),
         ]),
         Overlay::None => hints(&[("/", "commands"), ("Ctrl+.", "shortcuts"), ("q", "quit")]),
@@ -297,15 +302,36 @@ fn draw_body(
     // visible slice is converted to ratatui lines.
     let body_height = area.height as usize;
     let block_offset = state.block_offset;
+    // Both are read before the chapter is borrowed for rendering.
+    let focus_span = if state.focus_mode {
+        state.focus_block_span(layout.content_width)
+    } else {
+        None
+    };
+    let dim_style = to_tui_style(Style::fg(state.theme.palette.dim));
+
     let lines = state.chapter_lines(layout.content_width);
     let line_count = lines.len();
     let max_offset = line_count.saturating_sub(body_height);
-    let offset = block_offset.min(max_offset);
+    // Focus mode puts the block it is on in the middle of the column, so the
+    // reader's eye stays in one place as blocks step past it.
+    let offset = match focus_span {
+        Some((start, length)) => centred_offset(start, length, body_height).min(max_offset),
+        None => block_offset.min(max_offset),
+    };
     let visible: Vec<Line<'_>> = lines
         .iter()
+        .enumerate()
         .skip(offset)
         .take(body_height)
-        .map(to_tui_line)
+        .map(|(index, line)| match focus_span {
+            // Everything but the focused block is dimmed rather than hidden, so
+            // the block keeps the context it belongs to.
+            Some((start, length)) if index < start || index >= start + length => {
+                dimmed_line(line, dim_style)
+            }
+            _ => to_tui_line(line),
+        })
         .collect();
 
     let padding = layout.content_padding;
@@ -326,6 +352,24 @@ fn draw_body(
         rows: body_height.min(line_count),
         total: line_count,
     }
+}
+
+/// The scroll offset that puts a block of `length` lines in the middle.
+///
+/// A block taller than the column starts at its top instead: showing its middle
+/// would cut off the beginning of what the reader is meant to be reading.
+const fn centred_offset(start: usize, length: usize, body_height: usize) -> usize {
+    start.saturating_sub(body_height.saturating_sub(length) / 2)
+}
+
+/// The same line, drawn in the palette's dim colour.
+fn dimmed_line(line: &reader_core::style::StyledLine, dim: TuiStyle) -> Line<'_> {
+    Line::from(
+        line.spans
+            .iter()
+            .map(|span| Span::styled(span.text.as_str(), dim))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// A one-column scrollbar whose thumb length reflects how much is visible.
@@ -826,6 +870,78 @@ mod tests {
         state.current_book = Some(book());
         state.status = "Opened Quiet Harbour".to_owned();
         state
+    }
+
+    /// Render one frame and say, for each body row that has text on it, whether
+    /// it was dimmed. Blank rows carry no colour, so they are left out.
+    ///
+    /// Dimming is what focus mode does to everything outside the block it is on,
+    /// so this is how a test sees which block the column is showing.
+    fn dimmed_rows(state: &mut ReaderState, width: u16, height: u16) -> Vec<(u16, bool)> {
+        let storage = reader_storage::Storage::open_in_memory().expect("database");
+        let entries = reader_app::visible_entries(state, &storage, 0);
+        let dim = crate::style::to_tui_color(state.theme.palette.dim);
+        let mut terminal =
+            Terminal::new(TestBackend::new(width, height)).expect("test backend should build");
+        terminal
+            .draw(|frame| draw(frame, state, &CommandBar::default(), &entries))
+            .expect("drawing should succeed");
+        let buffer = terminal.backend().buffer().clone();
+        // Row 0 is the opening rule; the last two are the status and metadata.
+        (1..buffer.area.height - 2)
+            .filter_map(|row| {
+                let written: Vec<_> = (0..buffer.area.width)
+                    .map(|column| &buffer[(column, row)])
+                    // The scrollbar is chrome, not text.
+                    .filter(|cell| cell.symbol().trim() != "" && cell.symbol() != "│")
+                    .collect();
+                (!written.is_empty())
+                    .then(|| (row, written.iter().all(|cell| cell.style().fg == Some(dim))))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn focus_mode_centres_one_block_and_dims_the_rest() {
+        let mut state = reader();
+        let plain = dimmed_rows(&mut state, 78, 14);
+        assert!(
+            plain.iter().all(|(_, dimmed)| !dimmed),
+            "nothing is dimmed while reading normally: {plain:?}"
+        );
+
+        state.focus_mode = true;
+        state.focus_block_index = 3;
+        state.block_offset = state.focus_index_to_offset(60, 3);
+        let focused = dimmed_rows(&mut state, 78, 14);
+
+        let lit: Vec<u16> = focused
+            .iter()
+            .filter(|(_, dimmed)| !dimmed)
+            .map(|(row, _)| *row)
+            .collect();
+        assert!(!lit.is_empty(), "the focused block stays lit: {focused:?}");
+        assert!(
+            focused.iter().any(|(_, dimmed)| *dimmed),
+            "its neighbours are dimmed: {focused:?}"
+        );
+        // Lit rows are one run: the block is whole, not a scatter of lines.
+        let first = focused
+            .iter()
+            .position(|(_, dimmed)| !dimmed)
+            .expect("a lit row");
+        let last = focused
+            .iter()
+            .rposition(|(_, dimmed)| !dimmed)
+            .expect("a lit row");
+        assert!(
+            focused[first..=last].iter().all(|(_, dimmed)| !dimmed),
+            "the lit rows are contiguous: {focused:?}"
+        );
+        assert!(
+            first.abs_diff(focused.len() - 1 - last) <= 1,
+            "the block sits in the middle of the column: lit {lit:?} of {focused:?}"
+        );
     }
 
     /// Render one frame and return its rows as plain strings.

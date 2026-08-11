@@ -32,7 +32,7 @@ pub use settings::{
     AppSettings, CodeDensity, CodeLanguage, LineSpacing, ProgressVisibility, RenderMode,
     SettingsTab,
 };
-pub use shortcuts::{KEYBOARD_SHORTCUTS, Shortcut, ShortcutCategory};
+pub use shortcuts::{KEYBOARD_SHORTCUTS, Shortcut, ShortcutAction, ShortcutCategory};
 pub use style::{AnsiColor, Color, Span, Style, StyledLine};
 pub use theme::{AppearanceThemeId, ColorSchemeId, Palette, Theme};
 pub use throttle::{POSITION_FLUSH_INTERVAL_MS, WriteThrottle};

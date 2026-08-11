@@ -13,6 +13,12 @@ use reader_storage::Storage;
 use crate::frame::CommandBar;
 use crate::input::{Action, InputMode};
 
+/// What focus mode says for itself when it is switched on.
+///
+/// Focus mode changes what the movement keys do, so turning it on has to say so:
+/// nothing else on screen explains that j and k now step whole blocks.
+pub const FOCUS_MODE_HELP: &str = "Focus mode on · j/k step a block · g/G first/last · Esc exits";
+
 /// Which input map applies right now.
 #[must_use]
 pub fn current_mode(state: &ReaderState, command_bar: &CommandBar) -> InputMode {
@@ -85,34 +91,67 @@ pub fn apply(
         Action::Ignore => {}
         Action::Quit => state.should_quit = true,
 
+        // Focus mode reads a block at a time, so everything that would scroll
+        // lines moves the focused block instead. Scrolling inside a block the
+        // reader is meant to be looking at would only lose it.
         Action::ScrollDown(step) => {
-            let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
-            state.block_offset = (state.block_offset + step).min(max_offset);
+            if state.focus_mode {
+                step_focus(state, true, context);
+            } else {
+                let max_offset =
+                    state.chapter_max_offset(context.content_width, context.body_height);
+                state.block_offset = (state.block_offset + step).min(max_offset);
+            }
         }
         Action::ScrollUp(step) => {
-            state.block_offset = state.block_offset.saturating_sub(step);
+            if state.focus_mode {
+                step_focus(state, false, context);
+            } else {
+                state.block_offset = state.block_offset.saturating_sub(step);
+            }
         }
         Action::ScrollTo(offset) => {
             let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
             state.block_offset = offset.min(max_offset);
+            if state.focus_mode {
+                state.focus_block_index =
+                    state.offset_to_focus_index(context.content_width, state.block_offset);
+            }
         }
         Action::PageDown => {
             state.push_nav_history();
-            let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
-            state.block_offset = (state.block_offset + page).min(max_offset);
+            if state.focus_mode {
+                step_focus(state, true, context);
+            } else {
+                let max_offset =
+                    state.chapter_max_offset(context.content_width, context.body_height);
+                state.block_offset = (state.block_offset + page).min(max_offset);
+            }
         }
         Action::PageUp => {
             state.push_nav_history();
-            state.block_offset = state.block_offset.saturating_sub(page);
+            if state.focus_mode {
+                step_focus(state, false, context);
+            } else {
+                state.block_offset = state.block_offset.saturating_sub(page);
+            }
         }
         Action::ChapterStart | Action::JumpToTop => {
             state.push_nav_history();
             state.block_offset = 0;
+            if state.focus_mode {
+                focus_block(state, 0, context);
+            }
         }
         Action::ChapterEnd | Action::JumpToBottom => {
             state.push_nav_history();
-            state.block_offset =
-                state.chapter_max_offset(context.content_width, context.body_height);
+            if state.focus_mode {
+                let last = state.chapter_block_count().saturating_sub(1);
+                focus_block(state, last, context);
+            } else {
+                state.block_offset =
+                    state.chapter_max_offset(context.content_width, context.body_height);
+            }
         }
         Action::PreviousChapter => execute_command(state, storage, "/prev", context)?,
         Action::NextChapter => execute_command(state, storage, "/next", context)?,
@@ -154,6 +193,10 @@ pub fn apply(
                     state.status = "Settings unchanged.".to_owned();
                 }
                 close_overlay(state);
+            } else if state.focus_mode {
+                // The footer promises Esc leaves focus mode; this is that.
+                state.focus_mode = false;
+                state.status = "Focus mode off".to_owned();
             } else if state.search.is_some() {
                 state.search = None;
                 state.status = "Search cleared.".to_owned();
@@ -237,14 +280,17 @@ pub fn apply(
         Action::OverlayPageDown => state.overlay_cursor += page,
         Action::OverlayHome => state.overlay_cursor = 0,
         Action::OverlayEnd => state.overlay_cursor = usize::MAX,
-        Action::OverlayConfirm => confirm_overlay(state, storage, context)?,
+        Action::OverlayConfirm => confirm_overlay(state, storage, command_bar, context)?,
         Action::PointerSelect(index) => {
             state.overlay_cursor = index;
-            // A group heading has nothing to select: folding it is the point.
+            // In the shortcuts panel a heading folds and a binding runs, so a
+            // click does what the row says without the reader hunting for the key.
             if state.overlay == Overlay::Keys {
                 let rows = reader_app::shortcuts_panel::rows(state);
-                if let Some(row) = rows.get(index).cloned() {
-                    reader_app::shortcuts_panel::toggle(state, &row);
+                if let Some(row) = rows.get(index).cloned()
+                    && !reader_app::shortcuts_panel::toggle(state, &row)
+                {
+                    run_shortcut_row(&row, state, storage, command_bar, context)?;
                 }
             }
         }
@@ -327,9 +373,9 @@ pub fn apply(
         Action::ToggleFocusMode => {
             state.focus_mode = !state.focus_mode;
             if state.focus_mode {
-                state.focus_block_index =
-                    state.offset_to_focus_index(context.content_width, state.block_offset);
-                state.status = "Focus mode on".to_owned();
+                let index = state.offset_to_focus_index(context.content_width, state.block_offset);
+                focus_block(state, index, context);
+                state.status = FOCUS_MODE_HELP.to_owned();
             } else {
                 state.status = "Focus mode off".to_owned();
             }
@@ -388,6 +434,29 @@ fn char_to_byte(text: &str, char_index: usize) -> usize {
         .map_or(text.len(), |(byte, _)| byte)
 }
 
+/// Focus the neighbouring block, and stop at the ends of the chapter.
+fn step_focus(state: &mut ReaderState, forward: bool, context: CommandContext) {
+    let count = state.chapter_block_count();
+    if count == 0 {
+        return;
+    }
+    let next = if forward {
+        (state.focus_block_index + 1).min(count - 1)
+    } else {
+        state.focus_block_index.saturating_sub(1)
+    };
+    focus_block(state, next, context);
+}
+
+/// Focus one block and scroll so it is the block on screen.
+fn focus_block(state: &mut ReaderState, index: usize, context: CommandContext) {
+    let index = state.clamp_focus_index(index);
+    state.focus_block_index = index;
+    let offset = state.focus_index_to_offset(context.content_width, index);
+    let max_offset = state.chapter_max_offset(context.content_width, context.body_height);
+    state.block_offset = offset.min(max_offset);
+}
+
 fn advance_search(state: &mut ReaderState, forward: bool, context: CommandContext) {
     let Some(hit) = state
         .search
@@ -434,6 +503,7 @@ fn clamp_cursors(
 fn confirm_overlay(
     state: &mut ReaderState,
     storage: &mut Storage,
+    command_bar: &mut CommandBar,
     context: CommandContext,
 ) -> Result<(), reader_app::ExecutionError> {
     let Some(entry) = visible_entries(state, storage, context.now)
@@ -528,12 +598,13 @@ fn confirm_overlay(
             }
         }
         Overlay::FilePicker => import_picked(state, storage, entry.index(), context),
-        // Folding a group keeps the panel open; that is the whole interaction.
+        // A heading folds and stays; a binding runs, which is what the panel is
+        // for once the reader has found the row they wanted.
         Overlay::Keys => {
             let rows = reader_app::shortcuts_panel::rows(state);
             if let Some(row) = entry.index().and_then(|index| rows.get(index).cloned()) {
                 if !reader_app::shortcuts_panel::toggle(state, &row) {
-                    close_overlay(state);
+                    run_shortcut_row(&row, state, storage, command_bar, context)?;
                 }
             } else {
                 close_overlay(state);
@@ -552,6 +623,52 @@ fn confirm_overlay(
         Overlay::Diagnostics | Overlay::Help | Overlay::None => close_overlay(state),
     }
     Ok(())
+}
+
+/// Run the binding a shortcuts-panel row documents.
+///
+/// The panel closes first, so the action lands on the reader rather than on the
+/// panel that was covering it. A key that only means something somewhere else —
+/// Enter, Esc, the keys that act on the row under the cursor — has nothing to
+/// run, so the panel stays open and says where the key applies.
+fn run_shortcut_row(
+    row: &reader_app::shortcuts_panel::PanelRow,
+    state: &mut ReaderState,
+    storage: &mut Storage,
+    command_bar: &mut CommandBar,
+    context: CommandContext,
+) -> Result<(), reader_app::ExecutionError> {
+    let Some(action) = row.action.map(shortcut_action) else {
+        state.status = format!("{} only works where it applies: {}", row.key, row.label);
+        return Ok(());
+    };
+    close_overlay(state);
+    apply(action, state, storage, command_bar, context)
+}
+
+/// The action a catalogued shortcut stands for.
+const fn shortcut_action(action: reader_core::ShortcutAction) -> Action {
+    use reader_core::ShortcutAction as Run;
+    match action {
+        Run::ScrollUp => Action::ScrollUp(crate::input::SCROLL_STEP),
+        Run::ScrollDown => Action::ScrollDown(crate::input::SCROLL_STEP),
+        Run::PageUp => Action::PageUp,
+        Run::PageDown => Action::PageDown,
+        Run::ChapterStart => Action::ChapterStart,
+        Run::ChapterEnd => Action::ChapterEnd,
+        Run::JumpToTop => Action::JumpToTop,
+        Run::JumpToBottom => Action::JumpToBottom,
+        Run::FocusCommandBar => Action::FocusCommandBar,
+        Run::OpenChapters => Action::OpenChapters,
+        Run::OpenBookmarks => Action::OpenBookmarks,
+        Run::OpenColorSchemes => Action::OpenColorSchemes,
+        Run::OpenThemes => Action::OpenThemes,
+        Run::OpenSettings => Action::OpenSettings,
+        Run::CycleRenderMode => Action::CycleRenderMode,
+        Run::CycleProgress => Action::CycleProgress,
+        Run::ToggleFocusMode => Action::ToggleFocusMode,
+        Run::Quit => Action::Quit,
+    }
 }
 
 /// Import the ticked files, or the row under the cursor when nothing is ticked.
@@ -1099,13 +1216,138 @@ mod tests {
 
         act(Action::ToggleFocusMode, &mut state, &mut storage, &mut bar);
         assert!(state.focus_mode);
-        assert_eq!(state.status, "Focus mode on");
+        assert_eq!(
+            state.status,
+            super::FOCUS_MODE_HELP,
+            "switching it on says how it is driven"
+        );
         let expected_focus_index = state.offset_to_focus_index(CONTEXT.content_width, 6);
         assert_eq!(state.focus_block_index, expected_focus_index);
+        let block_start = state.focus_index_to_offset(CONTEXT.content_width, expected_focus_index);
+        assert_eq!(
+            state.block_offset, block_start,
+            "the page snaps to the block it focused"
+        );
 
         act(Action::ToggleFocusMode, &mut state, &mut storage, &mut bar);
         assert!(!state.focus_mode);
         assert_eq!(state.status, "Focus mode off");
+    }
+
+    #[test]
+    fn focus_mode_moves_a_block_at_a_time_and_esc_leaves_it() {
+        let (mut state, mut storage, mut bar) = reader();
+        act(Action::ToggleFocusMode, &mut state, &mut storage, &mut bar);
+        assert_eq!(state.focus_block_index, 0);
+
+        act(Action::ScrollDown(1), &mut state, &mut storage, &mut bar);
+        assert_eq!(state.focus_block_index, 1, "one key, one block");
+        let second_block = state.focus_index_to_offset(CONTEXT.content_width, 1);
+        assert_eq!(state.block_offset, second_block);
+
+        act(Action::ScrollUp(1), &mut state, &mut storage, &mut bar);
+        assert_eq!(state.focus_block_index, 0);
+        act(Action::ScrollUp(1), &mut state, &mut storage, &mut bar);
+        assert_eq!(state.focus_block_index, 0, "the first block is the floor");
+
+        act(Action::JumpToBottom, &mut state, &mut storage, &mut bar);
+        assert_eq!(
+            state.focus_block_index,
+            state.chapter_block_count() - 1,
+            "G focuses the last block"
+        );
+
+        act(Action::Dismiss, &mut state, &mut storage, &mut bar);
+        assert!(
+            !state.focus_mode,
+            "Esc leaves focus mode, as the footer says"
+        );
+        assert_eq!(state.status, "Focus mode off");
+    }
+
+    /// The row in the shortcuts panel whose key is `key`.
+    fn shortcut_row(state: &ReaderState, key: &str) -> usize {
+        reader_app::shortcuts_panel::rows(state)
+            .iter()
+            .position(|row| row.key == key)
+            .unwrap_or_else(|| panic!("a row for {key}"))
+    }
+
+    #[test]
+    fn clicking_a_shortcut_runs_it_and_closes_the_panel() {
+        let (mut state, mut storage, mut bar) = reader();
+        act(Action::OpenShortcuts, &mut state, &mut storage, &mut bar);
+        reader_app::shortcuts_panel::expand_all(&mut state);
+        let index = shortcut_row(&state, "f");
+
+        act(
+            Action::PointerSelect(index),
+            &mut state,
+            &mut storage,
+            &mut bar,
+        );
+
+        assert!(state.focus_mode, "the row did what it documents");
+        assert_eq!(
+            state.overlay,
+            Overlay::None,
+            "the panel gets out of the way"
+        );
+        assert_eq!(state.status, super::FOCUS_MODE_HELP);
+    }
+
+    #[test]
+    fn confirming_a_shortcut_row_opens_what_it_names() {
+        let (mut state, mut storage, mut bar) = reader();
+        act(Action::OpenShortcuts, &mut state, &mut storage, &mut bar);
+        reader_app::shortcuts_panel::expand_all(&mut state);
+        state.overlay_cursor = shortcut_row(&state, "Shift+T");
+
+        act(Action::OverlayConfirm, &mut state, &mut storage, &mut bar);
+
+        assert_eq!(state.overlay, Overlay::Chapters);
+    }
+
+    #[test]
+    fn a_key_that_only_works_elsewhere_keeps_the_panel_open() {
+        let (mut state, mut storage, mut bar) = reader();
+        act(Action::OpenShortcuts, &mut state, &mut storage, &mut bar);
+        reader_app::shortcuts_panel::expand_all(&mut state);
+        let index = shortcut_row(&state, "Enter");
+
+        act(
+            Action::PointerSelect(index),
+            &mut state,
+            &mut storage,
+            &mut bar,
+        );
+
+        assert_eq!(
+            state.overlay,
+            Overlay::Keys,
+            "nothing to run, nothing to close"
+        );
+        assert!(
+            state.status.starts_with("Enter only works"),
+            "it says where the key applies: {}",
+            state.status
+        );
+    }
+
+    #[test]
+    fn clicking_a_group_heading_still_folds_it() {
+        let (mut state, mut storage, mut bar) = reader();
+        act(Action::OpenShortcuts, &mut state, &mut storage, &mut bar);
+        let collapsed = state.collapsed_shortcut_categories.len();
+
+        act(Action::PointerSelect(0), &mut state, &mut storage, &mut bar);
+
+        assert_eq!(state.overlay, Overlay::Keys);
+        assert_eq!(
+            state.collapsed_shortcut_categories.len(),
+            collapsed + 1,
+            "the heading folded rather than running something"
+        );
     }
 
     #[test]

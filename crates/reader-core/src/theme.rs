@@ -544,6 +544,37 @@ mod tests {
         }
     }
 
+    /// Prompts and hints — the search row's placeholder, the footer keys — are
+    /// drawn in `dim`, so `dim` has to stay readable everywhere. `subtle` is the
+    /// colour of text that is meant to recede, and is deliberately not held to
+    /// this: it drops as low as 2:1 on the darker schemes.
+    ///
+    /// The ANSI appearances are left out: their colours are whatever the
+    /// terminal's own theme paints, so the ratio here would measure this
+    /// module's fallback swatches rather than what the reader sees.
+    #[test]
+    fn dim_text_is_readable_on_every_palette() {
+        let measurable = |appearance: AppearanceThemeId| {
+            !matches!(
+                appearance,
+                AppearanceThemeId::DarkAnsi | AppearanceThemeId::LightAnsi
+            )
+        };
+        for scheme in ColorSchemeId::ALL {
+            for appearance in AppearanceThemeId::ALL
+                .into_iter()
+                .filter(|it| measurable(*it))
+            {
+                let palette = Theme::resolve(scheme, appearance).palette;
+                let ratio = palette.dim.contrast(palette.background);
+                assert!(
+                    ratio >= 4.5,
+                    "{scheme:?} in {appearance:?}: dim reads at {ratio:.2}:1"
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_scheme_resolves_in_every_appearance() {
         for scheme in ColorSchemeId::ALL {

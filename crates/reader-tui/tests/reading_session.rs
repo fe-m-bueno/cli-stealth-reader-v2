@@ -502,14 +502,25 @@ fn clicking_the_shortcut_modal_folds_a_group_selects_a_row_and_closes_it() {
     .body;
     let modal = reader_tui::modals::modal_geometry(body);
 
-    // The second row is the first Essentials binding; clicking selects it.
+    // The second row is the first Essentials binding, "/" — clicking it runs the
+    // binding rather than asking the reader to go and press the key.
     session.mouse(
         MouseEventKind::Down(MouseButton::Left),
         modal.area.x + 4,
         modal.entries_y + 1,
     );
-    assert_eq!(session.state.overlay_cursor, 1);
-    assert_eq!(session.state.overlay, Overlay::Keys, "a row does not close");
+    assert_eq!(
+        session.state.overlay,
+        Overlay::None,
+        "running a binding puts the panel away"
+    );
+    assert!(
+        session.command_bar.active,
+        "clicking “Focus command bar” focuses the command bar"
+    );
+    session.press(KeyCode::Esc);
+    session.press(KeyCode::Char('?'));
+    session.rows();
 
     // Clicking the Essentials heading folds it.
     session.mouse(

@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use reader_core::{KEYBOARD_SHORTCUTS, ShortcutCategory};
+use reader_core::{KEYBOARD_SHORTCUTS, ShortcutAction, ShortcutCategory};
 
 use crate::state::ReaderState;
 
@@ -26,6 +26,10 @@ pub struct PanelRow {
     /// searching for "navigation" keeps the group visible.
     pub search: String,
     pub kind: RowKind,
+    /// What confirming the row runs, when the binding can be run from the panel.
+    /// Headers, and keys that only mean something where they are pressed, have
+    /// none.
+    pub action: Option<ShortcutAction>,
 }
 
 /// Whether a row is a group header or a binding.
@@ -93,6 +97,7 @@ pub fn rows(state: &ReaderState) -> Vec<PanelRow> {
             key: String::new(),
             search: label.to_owned(),
             kind: RowKind::Header(category),
+            action: None,
         });
         if collapsed {
             continue;
@@ -102,6 +107,7 @@ pub fn rows(state: &ReaderState) -> Vec<PanelRow> {
             key: shortcut.key.to_owned(),
             search: format!("{} {} {label}", shortcut.key, shortcut.description),
             kind: RowKind::Binding,
+            action: shortcut.action,
         }));
     }
     rows
@@ -109,8 +115,8 @@ pub fn rows(state: &ReaderState) -> Vec<PanelRow> {
 
 /// Fold or unfold the category a header row belongs to.
 ///
-/// Returns whether anything changed, so the caller can leave the status line
-/// alone when the reader confirmed a binding rather than a header.
+/// Returns whether anything changed, so a caller that confirmed a binding
+/// rather than a header knows to run the binding instead.
 pub fn toggle(state: &mut ReaderState, row: &PanelRow) -> bool {
     let RowKind::Header(category) = row.kind else {
         return false;
@@ -282,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn confirming_a_binding_row_changes_nothing() {
+    fn a_binding_row_is_not_foldable() {
         let mut state = reader();
         let binding = rows(&state)
             .into_iter()
@@ -291,6 +297,27 @@ mod tests {
 
         assert!(!toggle(&mut state, &binding), "a binding is not foldable");
         assert!(state.collapsed_shortcut_categories.is_empty());
+    }
+
+    #[test]
+    fn a_binding_row_carries_what_confirming_it_runs() {
+        let state = reader();
+        let rows = rows(&state);
+
+        let focus = rows
+            .iter()
+            .find(|row| row.key == "f")
+            .expect("the focus-mode binding");
+        assert_eq!(
+            focus.action,
+            Some(reader_core::ShortcutAction::ToggleFocusMode)
+        );
+        assert!(
+            rows.iter()
+                .filter(|row| matches!(row.kind, RowKind::Header(_)))
+                .all(|row| row.action.is_none()),
+            "a heading folds, it does not run"
+        );
     }
 
     #[test]

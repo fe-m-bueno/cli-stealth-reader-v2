@@ -49,12 +49,44 @@ impl ShortcutCategory {
     }
 }
 
+/// What the shortcuts panel runs when a binding is confirmed or clicked.
+///
+/// The catalogue names the effect; the front end owns the action type, so this
+/// stays a vocabulary both sides agree on rather than a dependency either way.
+/// A binding that only means something in a particular place — Enter, Esc, the
+/// keys that act on the row under the cursor — has no entry here, because
+/// running it from the panel would act on the panel instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutAction {
+    ScrollUp,
+    ScrollDown,
+    PageUp,
+    PageDown,
+    ChapterStart,
+    ChapterEnd,
+    JumpToTop,
+    JumpToBottom,
+    FocusCommandBar,
+    OpenChapters,
+    OpenBookmarks,
+    OpenColorSchemes,
+    OpenThemes,
+    OpenSettings,
+    CycleRenderMode,
+    CycleProgress,
+    ToggleFocusMode,
+    Quit,
+}
+
 /// One documented shortcut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
     pub category: ShortcutCategory,
     pub key: &'static str,
     pub description: &'static str,
+    /// What confirming the row in the panel does, when the binding can be run
+    /// from there at all.
+    pub action: Option<ShortcutAction>,
 }
 
 const fn shortcut(
@@ -66,36 +98,64 @@ const fn shortcut(
         category,
         key,
         description,
+        action: None,
     }
 }
 
+/// A shortcut the panel can run itself.
+const fn runnable(
+    category: ShortcutCategory,
+    key: &'static str,
+    description: &'static str,
+    action: ShortcutAction,
+) -> Shortcut {
+    Shortcut {
+        category,
+        key,
+        description,
+        action: Some(action),
+    }
+}
+
+use ShortcutAction as Run;
 use ShortcutCategory::{Commands, Essentials, Navigation, View};
 
 /// The catalogue, in the order the overlay lists it.
 pub const KEYBOARD_SHORTCUTS: [Shortcut; 30] = [
-    shortcut(Navigation, "j / ↑", "Scroll up"),
-    shortcut(Navigation, "k / ↓", "Scroll down"),
-    shortcut(
+    runnable(Navigation, "k / ↑", "Scroll up", Run::ScrollUp),
+    runnable(Navigation, "j / ↓", "Scroll down", Run::ScrollDown),
+    runnable(
         Navigation,
         "space / PgDn",
         "Page down / toggle picker selection",
+        Run::PageDown,
     ),
-    shortcut(Navigation, "b / PgUp", "Page up"),
-    shortcut(Navigation, "Home", "Jump to chapter start"),
-    shortcut(Navigation, "End", "Jump to chapter end"),
+    runnable(Navigation, "b / PgUp", "Page up", Run::PageUp),
+    runnable(
+        Navigation,
+        "Home",
+        "Jump to chapter start",
+        Run::ChapterStart,
+    ),
+    runnable(Navigation, "End", "Jump to chapter end", Run::ChapterEnd),
     shortcut(Navigation, "← / →", "Previous / next chapter"),
-    shortcut(Navigation, "Shift+T", "Open table of contents"),
-    shortcut(Navigation, "Shift+B", "Open bookmarks"),
+    runnable(
+        Navigation,
+        "Shift+T",
+        "Open table of contents",
+        Run::OpenChapters,
+    ),
+    runnable(Navigation, "Shift+B", "Open bookmarks", Run::OpenBookmarks),
     shortcut(Navigation, "[ / ]", "Back / forward in navigation history"),
     shortcut(Navigation, "wheel", "Scroll the page"),
-    shortcut(Navigation, "g", "Jump to top"),
-    shortcut(Navigation, "Shift+G", "Jump to bottom"),
+    runnable(Navigation, "g", "Jump to top", Run::JumpToTop),
+    runnable(Navigation, "Shift+G", "Jump to bottom", Run::JumpToBottom),
     shortcut(
         Commands,
         "n / Shift+N",
         "Next / previous search match (after /search)",
     ),
-    shortcut(Essentials, "/", "Focus command bar"),
+    runnable(Essentials, "/", "Focus command bar", Run::FocusCommandBar),
     shortcut(Essentials, "Enter", "Run command / confirm picker"),
     shortcut(Essentials, "Esc", "Close overlay or blur command input"),
     shortcut(
@@ -110,27 +170,35 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 30] = [
         "Reverse sort direction in book library",
     ),
     shortcut(Essentials, "? / Ctrl+. / Ctrl+X", "Open keyboard shortcuts"),
-    shortcut(
+    runnable(
         View,
         "m",
         "Cycle render mode (plain → typescript → python → rust)",
+        Run::CycleRenderMode,
     ),
-    shortcut(View, "f", "Toggle focus mode (single block centered)"),
-    shortcut(View, "c", "Open colorscheme picker"),
-    shortcut(View, "Shift+C", "Open theme picker"),
-    shortcut(
+    runnable(
+        View,
+        "f",
+        "Focus mode: dim all but one block (j/k move it, Esc leaves)",
+        Run::ToggleFocusMode,
+    ),
+    runnable(View, "c", "Open colorscheme picker", Run::OpenColorSchemes),
+    runnable(View, "Shift+C", "Open theme picker", Run::OpenThemes),
+    runnable(
         Essentials,
         "Shift+S",
         "Open tabbed reader settings with live preview",
+        Run::OpenSettings,
     ),
-    shortcut(
+    runnable(
         View,
         "p",
         "Cycle progress display (time left / % bars / hidden)",
+        Run::CycleProgress,
     ),
     shortcut(View, "Tab", "Autocomplete or cycle command suggestions"),
     shortcut(View, "↑/↓", "Move through the command palette"),
-    shortcut(Essentials, "q", "Quit the reader"),
+    runnable(Essentials, "q", "Quit the reader", Run::Quit),
 ];
 
 /// Shortcuts of one category, in catalogue order.
@@ -160,7 +228,9 @@ pub fn search_shortcuts(query: &str) -> Vec<Shortcut> {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEYBOARD_SHORTCUTS, ShortcutCategory, search_shortcuts, shortcuts_in};
+    use super::{
+        KEYBOARD_SHORTCUTS, ShortcutAction, ShortcutCategory, search_shortcuts, shortcuts_in,
+    };
 
     #[test]
     fn every_shortcut_is_documented_and_categorized() {
@@ -204,8 +274,40 @@ mod tests {
     #[test]
     fn categories_keep_catalogue_order() {
         let navigation = shortcuts_in(ShortcutCategory::Navigation);
-        assert_eq!(navigation.first().expect("non-empty").key, "j / ↑");
+        assert_eq!(navigation.first().expect("non-empty").key, "k / ↑");
         assert_eq!(navigation.last().expect("non-empty").key, "Shift+G");
+    }
+
+    #[test]
+    fn the_scroll_keys_are_documented_in_the_direction_they_move() {
+        let by_key = |key: &str| {
+            KEYBOARD_SHORTCUTS
+                .into_iter()
+                .find(|entry| entry.key == key)
+                .expect("a documented key")
+        };
+        assert_eq!(by_key("j / ↓").description, "Scroll down");
+        assert_eq!(by_key("j / ↓").action, Some(ShortcutAction::ScrollDown));
+        assert_eq!(by_key("k / ↑").description, "Scroll up");
+        assert_eq!(by_key("k / ↑").action, Some(ShortcutAction::ScrollUp));
+    }
+
+    #[test]
+    fn only_context_free_bindings_can_be_run_from_the_panel() {
+        let action_of = |key: &str| {
+            KEYBOARD_SHORTCUTS
+                .into_iter()
+                .find(|entry| entry.key == key)
+                .expect("a documented key")
+                .action
+        };
+        assert_eq!(action_of("f"), Some(ShortcutAction::ToggleFocusMode));
+        assert_eq!(action_of("Shift+T"), Some(ShortcutAction::OpenChapters));
+        // Enter, Esc, and the row-scoped keys only mean something where they are
+        // pressed, so the panel has nothing to run for them.
+        for key in ["Enter", "Esc", "d", "Tab", "wheel"] {
+            assert_eq!(action_of(key), None, "{key} should not be runnable");
+        }
     }
 
     #[test]
