@@ -15,3 +15,4 @@ reader-storage.workspace = true
 reader-tui.workspace = true
 
 clap.workspace = true
+sha2.workspace = true
