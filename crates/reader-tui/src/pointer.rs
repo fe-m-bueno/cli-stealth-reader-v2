@@ -59,6 +59,10 @@ pub fn map_mouse(
     pointer: &mut PointerState,
 ) -> Action {
     match event.kind {
+        // While the palette is open the wheel belongs to its list: that is what
+        // the reader is looking at.
+        MouseEventKind::ScrollDown if command_bar.active => return Action::CommandNext,
+        MouseEventKind::ScrollUp if command_bar.active => return Action::CommandPrevious,
         MouseEventKind::ScrollDown => return Action::ScrollDown(WHEEL_STEP),
         MouseEventKind::ScrollUp => return Action::ScrollUp(WHEEL_STEP),
         MouseEventKind::Up(_) => {

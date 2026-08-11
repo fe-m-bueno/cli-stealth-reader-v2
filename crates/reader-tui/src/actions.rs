@@ -139,12 +139,14 @@ pub fn apply(
             command_bar.active = true;
             command_bar.buffer.clear();
             command_bar.cursor = 0;
+            command_bar.selected = 0;
         }
         Action::Dismiss => {
             if command_bar.active {
                 command_bar.active = false;
                 command_bar.buffer.clear();
                 command_bar.cursor = 0;
+                command_bar.selected = 0;
             } else if state.overlay != Overlay::None {
                 // Leaving the settings panel discards its preview.
                 if state.overlay == Overlay::Settings {
@@ -158,9 +160,12 @@ pub fn apply(
             }
         }
         Action::SubmitCommand => {
+            // Enter runs what was typed, never what the list happens to be
+            // pointing at: Tab is what turns a highlighted row into text.
             let line = std::mem::take(&mut command_bar.buffer);
             command_bar.active = false;
             command_bar.cursor = 0;
+            command_bar.selected = 0;
             if !line.trim().is_empty() {
                 let command = if line.starts_with('/') {
                     line
@@ -171,33 +176,52 @@ pub fn apply(
             }
         }
         Action::CompleteCommand => {
-            let suggestions = reader_core::command::list_command_suggestions(
-                &command_bar.buffer,
-                command_bar.cursor,
-                None,
-            );
-            if let Some(suggestion) = suggestions.first() {
-                command_bar.buffer =
-                    reader_core::command::apply_completion(&command_bar.buffer, suggestion);
+            let suggestions = crate::palette::suggestions(command_bar);
+            if !suggestions.is_empty() {
+                // Tab on an already-complete name walks the list rather than
+                // retyping what is there, so the highlight follows the insertion.
+                let index = reader_core::command::next_completion_index(
+                    &command_bar.buffer,
+                    command_bar.selected,
+                    &suggestions,
+                );
+                command_bar.buffer = reader_core::command::apply_completion(
+                    &command_bar.buffer,
+                    &suggestions[index],
+                );
                 command_bar.cursor = command_bar.buffer.chars().count();
+                command_bar.selected = index;
             }
+        }
+        Action::CommandPrevious => {
+            command_bar.selected = command_bar.selected.saturating_sub(1);
+        }
+        Action::CommandNext => {
+            let last = crate::palette::suggestions(command_bar)
+                .len()
+                .saturating_sub(1);
+            command_bar.selected = (command_bar.selected + 1).min(last);
         }
         Action::InsertChar(character) => {
             let byte = char_to_byte(&command_bar.buffer, command_bar.cursor);
             command_bar.buffer.insert(byte, character);
             command_bar.cursor += 1;
+            // A narrowed list is a different list: the highlight starts again.
+            command_bar.selected = 0;
         }
         Action::DeleteBackward => {
             if command_bar.cursor > 0 {
                 let byte = char_to_byte(&command_bar.buffer, command_bar.cursor - 1);
                 command_bar.buffer.remove(byte);
                 command_bar.cursor -= 1;
+                command_bar.selected = 0;
             }
         }
         Action::DeleteForward => {
             if command_bar.cursor < command_bar.buffer.chars().count() {
                 let byte = char_to_byte(&command_bar.buffer, command_bar.cursor);
                 command_bar.buffer.remove(byte);
+                command_bar.selected = 0;
             }
         }
         Action::MoveCursorLeft => command_bar.cursor = command_bar.cursor.saturating_sub(1),
@@ -847,6 +871,62 @@ mod tests {
         act(Action::CompleteCommand, &mut state, &mut storage, &mut bar);
         assert_eq!(bar.buffer, "changebook");
         assert_eq!(bar.cursor, 10);
+    }
+
+    #[test]
+    fn the_palette_highlight_moves_and_stops_at_both_ends() {
+        let (mut state, mut storage, mut bar) = reader();
+        bar.active = true;
+
+        act(Action::CommandPrevious, &mut state, &mut storage, &mut bar);
+        assert_eq!(bar.selected, 0, "the first row is the top of the list");
+
+        act(Action::CommandNext, &mut state, &mut storage, &mut bar);
+        act(Action::CommandNext, &mut state, &mut storage, &mut bar);
+        assert_eq!(bar.selected, 2);
+        act(Action::CommandPrevious, &mut state, &mut storage, &mut bar);
+        assert_eq!(bar.selected, 1);
+
+        for _ in 0..500 {
+            act(Action::CommandNext, &mut state, &mut storage, &mut bar);
+        }
+        let last = crate::palette::suggestions(&bar).len() - 1;
+        assert_eq!(bar.selected, last, "the highlight never leaves the list");
+    }
+
+    #[test]
+    fn typing_narrows_the_list_and_starts_the_highlight_again() {
+        let (mut state, mut storage, mut bar) = reader();
+        bar.active = true;
+        act(Action::CommandNext, &mut state, &mut storage, &mut bar);
+        act(Action::CommandNext, &mut state, &mut storage, &mut bar);
+
+        act(Action::InsertChar('g'), &mut state, &mut storage, &mut bar);
+        assert_eq!(bar.selected, 0, "a different list needs a fresh cursor");
+    }
+
+    #[test]
+    fn completion_takes_the_highlighted_row_and_then_walks_the_list() {
+        let (mut state, mut storage, mut bar) = reader();
+        bar.active = true;
+        bar.buffer = "ma".to_owned();
+        bar.cursor = 2;
+        bar.selected = 1;
+
+        act(Action::CompleteCommand, &mut state, &mut storage, &mut bar);
+        assert_eq!(
+            bar.buffer, "marks",
+            "Tab completes the highlighted row, not the first one"
+        );
+
+        // A name that is already complete walks on rather than retyping itself.
+        let (mut state, mut storage, mut bar) = reader();
+        bar.active = true;
+        bar.buffer = "tag".to_owned();
+        bar.cursor = 3;
+        act(Action::CompleteCommand, &mut state, &mut storage, &mut bar);
+        assert_eq!(bar.buffer, "tags");
+        assert_eq!(bar.selected, 1, "the highlight follows the insertion");
     }
 
     #[test]

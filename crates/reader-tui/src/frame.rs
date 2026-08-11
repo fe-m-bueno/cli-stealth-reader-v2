@@ -30,19 +30,23 @@ pub struct CommandBar {
     pub buffer: String,
     /// Cursor position in characters.
     pub cursor: usize,
+    /// Which suggestion the palette highlights, and which one Tab completes.
+    pub selected: usize,
     /// A running Toggl timer, when one is known. The integration owns the text;
     /// the footer only places it.
     pub timer: Option<String>,
 }
 
-/// Rows below the closing rule: the command bar while it is active, and the
-/// reading metadata whenever a book is open.
+/// Rows below the closing rule: the reading metadata whenever a book is open.
+///
+/// The command palette is not counted: it is drawn over the reading area rather
+/// than under the rule, so opening it does not reflow the text behind it.
 ///
 /// The two rules themselves are not counted here — [`reader_app::compute_layout`]
 /// already reserves them — so this stays the number the layout needs.
 #[must_use]
-pub fn footer_height(state: &ReaderState, command_bar: &CommandBar) -> u16 {
-    u16::from(command_bar.active) + u16::from(state.current_book.is_some())
+pub fn footer_height(state: &ReaderState, _command_bar: &CommandBar) -> u16 {
+    u16::from(state.current_book.is_some())
 }
 
 /// Where each part of the frame ends up.
@@ -54,6 +58,7 @@ pub struct FrameGeometry {
     pub header: Option<Rect>,
     pub body: Rect,
     pub status: Option<Rect>,
+    /// The typed line of the command palette, while it is open.
     pub command: Option<Rect>,
     pub metadata: Option<Rect>,
     /// Column the scrollbar occupies, when one is drawn.
@@ -79,10 +84,13 @@ pub fn geometry(area: Rect, state: &ReaderState, command_bar: &CommandBar) -> Fr
     };
     cursor += body.height;
     let status = take_row(area, &mut cursor);
-    let command = command_bar
-        .active
-        .then(|| take_row(area, &mut cursor))
-        .flatten();
+    // The palette is drawn over the reading area, so its typed line comes from
+    // the body rather than from a row of the footer.
+    let command = command_bar.active.then(|| {
+        crate::palette::geometry(body, crate::palette::suggestions(command_bar).len())
+            .map(|palette| palette.input)
+    });
+    let command = command.flatten();
     let metadata = state
         .current_book
         .is_some()
@@ -118,7 +126,6 @@ pub fn draw(
         header: header_area,
         body: body_area,
         status: status_area,
-        command: command_area,
         metadata: metadata_area,
         ..
     } = geometry(area, state, command_bar);
@@ -142,15 +149,18 @@ pub fn draw(
     if let Some(row) = status_area {
         draw_status_rule(frame, row, state, command_bar);
     }
-    if let Some(row) = command_area {
-        draw_command_bar(frame, row, state, command_bar);
-    }
     if let Some(row) = metadata_area {
         draw_metadata(frame, row, state, &layout, visible);
     }
 
     if state.overlay != Overlay::None {
         draw_overlay(frame, body_area, state, overlay_entries);
+    }
+
+    // The palette is the thing being typed into, so nothing draws over it.
+    if command_bar.active {
+        let suggestions = crate::palette::suggestions(command_bar);
+        crate::palette::draw(frame, body_area, state, command_bar, &suggestions);
     }
 }
 
@@ -226,7 +236,16 @@ fn header_right(state: &ReaderState) -> String {
 }
 
 /// The keys that apply right now, for the closing rule.
-fn footer_hints(state: &ReaderState) -> String {
+fn footer_hints(state: &ReaderState, command_bar: &CommandBar) -> String {
+    // While the palette is open, the keys that matter are the palette's own.
+    if command_bar.active {
+        return hints(&[
+            ("↑/↓", "nav"),
+            ("Tab", "complete"),
+            ("Enter", "run"),
+            ("Esc", "close"),
+        ]);
+    }
     match state.overlay {
         Overlay::Keys if state.overlay_search.active => {
             hints(&[("Esc", "exit search"), ("Esc Esc", "close")])
@@ -448,30 +467,9 @@ fn draw_status_rule(
             RuleSide::Bottom,
             area.width,
             &status,
-            &footer_hints(state),
+            &footer_hints(state, command_bar),
             &state.theme.palette,
         )),
-        area,
-    );
-}
-
-fn draw_command_bar(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &ReaderState,
-    command_bar: &CommandBar,
-) {
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "/",
-                to_tui_style(Style::fg(state.theme.palette.accent).bold()),
-            ),
-            Span::styled(
-                command_bar.buffer.clone(),
-                to_tui_style(Style::fg(state.theme.palette.foreground)),
-            ),
-        ])),
         area,
     );
 }
@@ -1034,17 +1032,22 @@ mod tests {
     }
 
     #[test]
-    fn the_command_bar_takes_a_row_only_while_it_is_active() {
+    fn the_palette_draws_over_the_reading_area_without_reflowing_it() {
         let inactive = CommandBar::default();
         let active = CommandBar {
             active: true,
             buffer: "goto 2".to_owned(),
             cursor: 6,
+            selected: 0,
             timer: None,
         };
         let mut state = reader();
+        assert_eq!(
+            footer_height(&state, &active),
+            footer_height(&state, &inactive),
+            "opening the palette must not move the text behind it"
+        );
         assert_eq!(footer_height(&state, &inactive), 1);
-        assert_eq!(footer_height(&state, &active), 2);
 
         let empty = ReaderState::new(AppSettings::default());
         assert_eq!(
@@ -1053,11 +1056,103 @@ mod tests {
             "without a book there is nothing to report"
         );
 
-        let rows = render(&mut state, &active, 60, 12);
+        let rows = render(&mut state, &active, 78, 20);
         assert!(
-            rows[rows.len() - 2].starts_with("/goto 2"),
-            "command row was {:?}",
-            rows[rows.len() - 2]
+            rows.iter().any(|row| row.contains("/goto 2█")),
+            "the typed line belongs inside the palette: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn the_palette_lists_the_matching_commands_and_says_what_they_do() {
+        let mut state = reader();
+        let command_bar = CommandBar {
+            active: true,
+            buffer: "boo".to_owned(),
+            cursor: 3,
+            selected: 0,
+            timer: None,
+        };
+        let rows = render(&mut state, &command_bar, 100, 24);
+
+        let listed: Vec<&String> = rows.iter().filter(|row| row.contains("/book")).collect();
+        assert!(
+            !listed.is_empty(),
+            "typing an alias should list its command: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("Switch books")),
+            "a row says what the command does: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("Library")),
+            "and which category it belongs to: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("Tab:complete") && row.contains("Esc:close")),
+            "the footer switches to the palette's own keys: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn only_the_highlighted_row_carries_its_aliases_and_flags() {
+        let mut state = reader();
+        let command_bar = CommandBar {
+            active: true,
+            buffer: "highlight".to_owned(),
+            cursor: 9,
+            selected: 0,
+            timer: None,
+        };
+        let rows = render(&mut state, &command_bar, 120, 24);
+        assert!(
+            rows.iter().any(|row| row.contains("(try /highlight on)")),
+            "the selected row explains itself: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn a_query_that_matches_nothing_says_so_instead_of_showing_an_empty_box() {
+        let mut state = reader();
+        let command_bar = CommandBar {
+            active: true,
+            buffer: "zzz".to_owned(),
+            cursor: 3,
+            selected: 0,
+            timer: None,
+        };
+        let rows = render(&mut state, &command_bar, 60, 14);
+        assert!(
+            rows.iter().any(|row| row.contains("No command matches")),
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter().any(|row| row.contains("/zzz█")),
+            "the typed line stays visible: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn the_highlight_moves_through_the_list() {
+        let mut state = reader();
+        let mut command_bar = CommandBar {
+            active: true,
+            selected: 0,
+            ..CommandBar::default()
+        };
+        command_bar.active = true;
+        let first = render(&mut state, &command_bar, 120, 24);
+
+        command_bar.selected = 3;
+        let moved = render(&mut state, &command_bar, 120, 24);
+        assert_ne!(first, moved, "a different row is highlighted");
+
+        command_bar.selected = 200;
+        let clamped = render(&mut state, &command_bar, 120, 24);
+        assert!(
+            clamped.iter().any(|row| row.contains('█')),
+            "past the end the list still draws: {clamped:?}"
         );
     }
 
