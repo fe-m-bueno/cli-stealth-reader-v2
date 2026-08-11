@@ -84,6 +84,7 @@ procedure are in [the baseline document](docs/migration/performance-baseline.md)
 
 - [Migration architecture](docs/migration/architecture.md)
 - [v1 compatibility contract and parity status](docs/migration/compatibility-contract.md)
+- [Reader-data migration and rollback](docs/migration/data-migration.md)
 - [Deliberate improvements over v1](docs/migration/improvements.md)
 - [Performance baseline and budgets](docs/migration/performance-baseline.md)
 - [Reference-repository research](docs/research/codex-and-grok-build-architecture.md)
