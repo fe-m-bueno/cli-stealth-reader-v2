@@ -14,7 +14,6 @@ use reader_app::{Overlay, OverlayEntry, ReaderState};
 use reader_core::pace::{
     EstimateScope, format_time_left, remaining_words_in_book, remaining_words_in_chapter,
 };
-use reader_core::render::render_blocks;
 use reader_core::style::Style;
 use reader_core::{ChapterWords, ProgressVisibility};
 
@@ -110,15 +109,18 @@ fn draw_body(
         return;
     };
 
-    let Some(chapter) = book.chapters.get(state.chapter_index) else {
+    if book.chapters.get(state.chapter_index).is_none() {
         return;
-    };
-    let options = state.render_options(layout.content_width);
-    let lines = render_blocks(&chapter.blocks, &options);
+    }
 
+    // The chapter is rendered once per change, not once per frame; only the
+    // visible slice is converted to ratatui lines.
     let body_height = inner.height as usize;
-    let max_offset = lines.len().saturating_sub(body_height);
-    let offset = state.block_offset.min(max_offset);
+    let block_offset = state.block_offset;
+    let lines = state.chapter_lines(layout.content_width);
+    let line_count = lines.len();
+    let max_offset = line_count.saturating_sub(body_height);
+    let offset = block_offset.min(max_offset);
     let visible: Vec<Line<'static>> = lines
         .iter()
         .skip(offset)
@@ -136,7 +138,7 @@ fn draw_body(
     frame.render_widget(Paragraph::new(visible), text_area);
 
     if layout.scrollbar_width > 0 && inner.width > 0 {
-        draw_scrollbar(frame, inner, state, lines.len(), offset);
+        draw_scrollbar(frame, inner, state, line_count, offset);
     }
 }
 

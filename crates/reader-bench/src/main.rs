@@ -253,6 +253,30 @@ fn main() {
             })
             .to_json(),
         );
+        // What a repaint costs once the chapter is rendered — the cost the reader
+        // actually pays per keypress, as opposed to the cold render above.
+        let widest_index = book
+            .chapters
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, chapter)| chapter.blocks.len())
+            .map_or(0, |(index, _)| index);
+        let mut reader = reader_app::ReaderState::new(plain_settings);
+        reader.current_book = Some(book.clone());
+        reader.chapter_index = widest_index;
+        std::hint::black_box(reader.chapter_lines(RENDER_WIDTH as u16).len());
+        // A single cached repaint rounds to zero at this resolution, so a hundred
+        // of them are timed together — a hundred keypresses of scrolling.
+        render.insert(
+            "cachedRepaintsPer100Ms".to_owned(),
+            time(RENDER_RUNS, || {
+                (0..100)
+                    .map(|_| reader.chapter_lines(RENDER_WIDTH as u16).len())
+                    .sum::<usize>()
+            })
+            .to_json(),
+        );
+
         render.insert(
             "wholeBookPlainMs".to_owned(),
             time((RENDER_RUNS / 4).max(3), || {

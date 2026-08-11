@@ -869,10 +869,8 @@ mod tests {
         act(Action::ToggleFocusMode, &mut state, &mut storage, &mut bar);
         assert!(state.focus_mode);
         assert_eq!(state.status, "Focus mode on");
-        assert_eq!(
-            state.focus_block_index,
-            state.offset_to_focus_index(CONTEXT.content_width, 6)
-        );
+        let expected_focus_index = state.offset_to_focus_index(CONTEXT.content_width, 6);
+        assert_eq!(state.focus_block_index, expected_focus_index);
 
         act(Action::ToggleFocusMode, &mut state, &mut storage, &mut bar);
         assert!(!state.focus_mode);

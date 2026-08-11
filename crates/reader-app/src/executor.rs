@@ -76,6 +76,7 @@ pub fn open_book(
     state.nav_history.clear();
     state.nav_history_cursor = None;
     state.invalidate_layout();
+    state.clear_render_cache();
     load_pace(state, storage, &book.id)?;
     state.current_book = Some(book);
     state.clamp_offset(context.content_width, context.body_height);

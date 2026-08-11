@@ -5,7 +5,10 @@
 //! history only records places the reader actually visited.
 
 use reader_core::render::{RenderOptions, render_blocks};
-use reader_core::{AppSettings, CanonicalBook, LibrarySortKey, PaceState, SortDirection, Theme};
+use reader_core::{
+    AppSettings, CanonicalBook, LibrarySortKey, PaceState, Palette, SortDirection, StyledLine,
+    Theme,
+};
 
 use crate::layout::{OverlayLayout, Viewport, ViewportLayout, compute_layout};
 
@@ -151,6 +154,12 @@ pub struct ReaderState {
     pub should_quit: bool,
     /// Cached per-chapter line counts, invalidated whenever rendering inputs change.
     layout_metrics: Option<LayoutMetrics>,
+    /// The current chapter's rendered lines, so repaints do not re-render it.
+    render_cache: crate::render_cache::ChapterRenderCache,
+    /// Per-block line counts used to map focus blocks to viewport offsets.
+    focus_line_metrics: Option<FocusLineMetrics>,
+    focus_line_cache_hits: u64,
+    focus_line_cache_misses: u64,
 }
 
 /// Rendered line counts per chapter, and what they were computed for.
@@ -163,6 +172,19 @@ struct LayoutMetrics {
     chapter_line_counts: Vec<usize>,
     /// Screens of content per chapter, used for whole-book progress.
     chapter_view_counts: Vec<usize>,
+}
+
+/// Rendered line counts for the current chapter's blocks, and their inputs.
+#[derive(Debug, Clone, PartialEq)]
+struct FocusLineMetrics {
+    book_id: String,
+    book_import_hash: String,
+    chapter_index: usize,
+    chapter_id: String,
+    settings: AppSettings,
+    palette: Palette,
+    content_width: u16,
+    counts: Vec<usize>,
 }
 
 impl ReaderState {
@@ -199,6 +221,10 @@ impl ReaderState {
             command_prefill: None,
             should_quit: false,
             layout_metrics: None,
+            render_cache: crate::render_cache::ChapterRenderCache::default(),
+            focus_line_metrics: None,
+            focus_line_cache_hits: 0,
+            focus_line_cache_misses: 0,
         }
     }
 
@@ -217,9 +243,74 @@ impl ReaderState {
         self.overlay_search.reset();
     }
 
-    /// Drop cached line counts; call after anything that changes rendering.
+    /// Drop cached layout metrics.
+    ///
+    /// The render caches carry their own keys, so changing an offset, viewport,
+    /// setting, or chapter naturally selects the right entry without throwing
+    /// away the rendered lines. Use [`Self::clear_render_cache`] when replacing
+    /// the book content behind an existing identity.
     pub fn invalidate_layout(&mut self) {
         self.layout_metrics = None;
+    }
+
+    /// Forget rendered chapter and focus data after replacing book content.
+    pub(crate) fn clear_render_cache(&mut self) {
+        self.render_cache.clear();
+        self.focus_line_metrics = None;
+    }
+
+    /// The current chapter's rendered lines, from cache when nothing changed.
+    ///
+    /// Drawing needs the whole chapter — the offset is clamped against the total
+    /// and the scrollbar is sized from it — so this is called on every repaint.
+    pub fn chapter_lines(&mut self, content_width: u16) -> &[StyledLine] {
+        // Destructured so the cache can be borrowed mutably while the book is
+        // borrowed immutably — both are fields of the same `self`.
+        let Self {
+            current_book,
+            chapter_index,
+            settings,
+            theme,
+            search,
+            render_cache,
+            ..
+        } = self;
+
+        let Some(chapter) = current_book
+            .as_ref()
+            .and_then(|book| book.chapters.get(*chapter_index))
+        else {
+            render_cache.clear();
+            return &[];
+        };
+        render_cache.lines(&crate::render_cache::RenderRequest {
+            book_id: current_book.as_ref().map_or("", |book| book.id.as_str()),
+            book_import_hash: current_book
+                .as_ref()
+                .map_or("", |book| book.import_hash.as_str()),
+            chapter_index: *chapter_index,
+            chapter_id: &chapter.id,
+            blocks: &chapter.blocks,
+            settings: *settings,
+            palette: &theme.palette,
+            content_width,
+            search_query: search
+                .as_ref()
+                .map(|state| state.query.as_str())
+                .filter(|query| !query.is_empty()),
+        })
+    }
+
+    /// Cache hits and misses, for tests and the benchmark.
+    #[must_use]
+    pub const fn render_cache_stats(&self) -> (u64, u64) {
+        self.render_cache.stats()
+    }
+
+    /// Focus line-count cache hits and misses, for tests and benchmarks.
+    #[must_use]
+    pub const fn focus_line_cache_stats(&self) -> (u64, u64) {
+        (self.focus_line_cache_hits, self.focus_line_cache_misses)
     }
 
     /// The book's id, when one is open.
@@ -433,23 +524,78 @@ impl ReaderState {
     }
 
     /// Rendered line counts of each block, for focus-mode mapping.
-    fn focus_line_counts(&self, content_width: u16) -> Vec<usize> {
-        let Some(chapter) = self.chapter() else {
-            return Vec::new();
+    fn focus_line_counts(&mut self, content_width: u16) -> &[usize] {
+        let Self {
+            current_book,
+            chapter_index,
+            settings,
+            theme,
+            focus_line_metrics,
+            focus_line_cache_hits,
+            focus_line_cache_misses,
+            ..
+        } = self;
+
+        let Some(book) = current_book.as_ref() else {
+            *focus_line_metrics = None;
+            return &[];
         };
-        let options = RenderOptions {
-            search_query: None,
-            ..self.render_options(content_width)
+        let Some(chapter) = book.chapters.get(*chapter_index) else {
+            *focus_line_metrics = None;
+            return &[];
         };
-        chapter
-            .blocks
-            .iter()
-            .enumerate()
-            .map(|(index, block)| {
-                let options = options.clone().with_block_offset(index);
-                render_blocks(std::slice::from_ref(block), &options).len()
-            })
-            .collect()
+
+        let fresh = focus_line_metrics.as_ref().is_some_and(|metrics| {
+            metrics.book_id == book.id
+                && metrics.book_import_hash == book.import_hash
+                && metrics.chapter_index == *chapter_index
+                && metrics.chapter_id == chapter.id
+                && metrics.settings == *settings
+                && metrics.palette == theme.palette
+                && metrics.content_width == content_width
+        });
+        if fresh {
+            *focus_line_cache_hits += 1;
+        } else {
+            *focus_line_cache_misses += 1;
+            let options = RenderOptions {
+                mode: settings.render_mode,
+                width: content_width as usize,
+                palette: &theme.palette,
+                code_language: settings.code_language,
+                code_density: settings.code_density,
+                plain_highlight: settings.plain_highlight,
+                line_spacing: settings.line_spacing,
+                block_index_offset: 0,
+                include_trailing_spacing: true,
+                search_query: None,
+            };
+            let counts = chapter
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| {
+                    render_blocks(
+                        std::slice::from_ref(block),
+                        &options.clone().with_block_offset(index),
+                    )
+                    .len()
+                })
+                .collect();
+            *focus_line_metrics = Some(FocusLineMetrics {
+                book_id: book.id.clone(),
+                book_import_hash: book.import_hash.clone(),
+                chapter_index: *chapter_index,
+                chapter_id: chapter.id.clone(),
+                settings: *settings,
+                palette: theme.palette,
+                content_width,
+                counts,
+            });
+        }
+        focus_line_metrics
+            .as_ref()
+            .map_or(&[][..], |metrics| metrics.counts.as_slice())
     }
 
     /// Keep the focused block inside the chapter.
@@ -463,7 +609,7 @@ impl ReaderState {
 
     /// The scroll offset that puts `focus_block_index` at the top.
     #[must_use]
-    pub fn focus_index_to_offset(&self, content_width: u16, focus_block_index: usize) -> usize {
+    pub fn focus_index_to_offset(&mut self, content_width: u16, focus_block_index: usize) -> usize {
         let counts = self.focus_line_counts(content_width);
         if counts.is_empty() {
             return 0;
@@ -474,7 +620,7 @@ impl ReaderState {
 
     /// The block containing the line at `block_offset`.
     #[must_use]
-    pub fn offset_to_focus_index(&self, content_width: u16, block_offset: usize) -> usize {
+    pub fn offset_to_focus_index(&mut self, content_width: u16, block_offset: usize) -> usize {
         let counts = self.focus_line_counts(content_width);
         if counts.is_empty() {
             return 0;
@@ -680,8 +826,23 @@ mod tests {
     }
 
     #[test]
+    fn layout_invalidation_keeps_a_matching_chapter_render() {
+        let mut state = state_with_book();
+
+        let _ = state.chapter_lines(40);
+        state.invalidate_layout();
+        let _ = state.chapter_lines(40);
+
+        assert_eq!(state.render_cache_stats(), (1, 1));
+
+        state.clear_render_cache();
+        let _ = state.chapter_lines(40);
+        assert_eq!(state.render_cache_stats(), (1, 2));
+    }
+
+    #[test]
     fn focus_mapping_round_trips_between_blocks_and_offsets() {
-        let state = state_with_book();
+        let mut state = state_with_book();
         for index in 0..state.chapter_block_count() {
             let offset = state.focus_index_to_offset(40, index);
             assert_eq!(state.offset_to_focus_index(40, offset), index);
@@ -695,10 +856,26 @@ mod tests {
 
     #[test]
     fn focus_mapping_is_empty_without_a_chapter() {
-        let state = ReaderState::new(AppSettings::default());
+        let mut state = ReaderState::new(AppSettings::default());
         assert_eq!(state.clamp_focus_index(3), 0);
         assert_eq!(state.focus_index_to_offset(40, 3), 0);
         assert_eq!(state.offset_to_focus_index(40, 3), 0);
+    }
+
+    #[test]
+    fn focus_line_counts_are_reused_until_rendering_inputs_change() {
+        let mut state = state_with_book();
+
+        let _ = state.focus_index_to_offset(40, 2);
+        let _ = state.offset_to_focus_index(40, 1);
+        assert_eq!(state.focus_line_cache_stats(), (1, 1));
+
+        state.settings.code_language = reader_core::CodeLanguage::Rust;
+        let _ = state.focus_index_to_offset(40, 2);
+        assert_eq!(state.focus_line_cache_stats(), (1, 2));
+
+        let _ = state.focus_index_to_offset(24, 2);
+        assert_eq!(state.focus_line_cache_stats(), (1, 3));
     }
 
     #[test]

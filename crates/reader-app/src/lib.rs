@@ -9,6 +9,7 @@ pub mod executor;
 pub mod layout;
 pub mod library;
 pub mod overlay;
+pub mod render_cache;
 pub mod settings_panel;
 pub mod shortcuts_panel;
 pub mod state;
@@ -20,4 +21,5 @@ pub use executor::{
 };
 pub use layout::{OverlayLayout, Viewport, ViewportLayout, compute_layout};
 pub use overlay::{EntryTarget, OverlayEntry, OverlaySearch, visible_entries};
+pub use render_cache::ChapterRenderCache;
 pub use state::{MAX_NAV_HISTORY, NavEntry, Overlay, ReaderState, SearchHit, SearchState};

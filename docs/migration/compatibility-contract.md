@@ -51,15 +51,18 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Shortcuts | Done | `reader-app/src/shortcuts_panel.rs`, folding and search tests |
 | Library UX | Done | `reader-app/src/overlay.rs`, fuzzy filtering over every overlay |
 | Hot-path I/O | Done | `reader-core/src/throttle.rs`, 1.5s coalescing driven by the loop |
-| Render cache | Partial | chapter line-count cache done; changed-line-only output is not |
+| Render cache | Done | chapter and focus line caches keyed by rendering inputs; Ratatui diffs changed cells between frames |
 | Layout rendering | Done | geometry and frame composition, asserted from buffers |
 | Toggl | Done | `reader-integrations`, 46 tests against recorded responses |
 | Startup CLI | Done | `--resume`, an optional file, and the argument tests |
 
-### What the remaining partial is
+### Render-cache note
 
-- **Changed-line-only repaint.** Ratatui already diffs its buffer, so the
-  observable behavior matches; v1's explicit line cache has no v2 equivalent.
+The reader keeps the current chapter's rendered lines and the current chapter's
+per-block line counts for focus navigation. Both caches are keyed by the book
+identity, imported content hash, chapter identity, width, palette, and every
+rendering setting that can affect their output. Ratatui owns the final frame
+diff, so unchanged cells are not written to the terminal between frames.
 
 ### Refinements closed since the first pass
 

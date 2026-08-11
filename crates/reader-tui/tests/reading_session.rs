@@ -555,6 +555,39 @@ fn a_toggl_command_without_a_connection_says_what_to_do() {
 }
 
 #[test]
+fn repainting_the_same_chapter_renders_it_only_once() {
+    let mut session = Session::start("render-cache");
+
+    // Ten frames of the same chapter: the reader is sitting still.
+    for _ in 0..10 {
+        session.rows();
+    }
+    let (hits, misses) = session.state.render_cache_stats();
+    assert_eq!(misses, 1, "the chapter is rendered once");
+    assert_eq!(hits, 9, "every later frame reads the cache");
+
+    // Scrolling does not change the lines, only which of them are shown.
+    session.press(KeyCode::Char('j'));
+    session.rows();
+    assert_eq!(
+        session.state.render_cache_stats(),
+        (10, 1),
+        "scrolling reuses the render"
+    );
+
+    // Anything that changes the lines has to render again.
+    session.press(KeyCode::Right);
+    session.rows();
+    let (_, after_chapter) = session.state.render_cache_stats();
+    assert_eq!(after_chapter, 2, "a new chapter renders");
+
+    session.command("mode rust");
+    session.rows();
+    let (_, after_mode) = session.state.render_cache_stats();
+    assert_eq!(after_mode, 3, "a new disguise renders");
+}
+
+#[test]
 fn a_running_timer_shows_in_the_footer_next_to_progress() {
     let mut session = Session::start("timer");
     session.command_bar.timer = Some("Toggl 25m · Reading".to_owned());
