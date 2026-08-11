@@ -4,6 +4,7 @@
 //! dependencies. Adapters convert external data into these types.
 
 pub mod book;
+pub mod command;
 pub mod fuzzy;
 pub mod locale;
 pub mod pace;
@@ -17,6 +18,7 @@ pub use book::{
     BlockKind, CanonicalBlock, CanonicalBook, CanonicalChapter, DiagnosticSeverity,
     ImportDiagnostic,
 };
+pub use command::{COMMANDS, ParsedCommand, parse_slash_command};
 pub use locale::{compare_text, format_relative_time};
 pub use pace::{ChapterWords, PaceSample, PaceState};
 pub use render::{RenderOptions, render_block, render_blocks};
