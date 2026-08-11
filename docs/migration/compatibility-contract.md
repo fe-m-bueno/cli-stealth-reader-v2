@@ -30,6 +30,44 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Locale/themes | English UI collation, Brazilian Portuguese relative time, stable palette variants | `test/locale.test.ts`, `test/themes.test.ts` | snapshot/value tests |
 | Startup CLI | `--resume` intent and explicit continue-reading startup | `src/index.ts`, `test/tui-startup.test.ts` | CLI parse and startup-state tests |
 
+## Parity status
+
+| Seam | Status | Evidence in v2 |
+| --- | --- | --- |
+| Canonical model | Done | `reader-core` unit tests, `reader-formats/tests/import_parity.rs` |
+| EPUB | Done | 8 committed fixtures compared against v1's canonical books |
+| CBZ | Done | 2 committed fixtures compared against v1's canonical books |
+| PDF | Done, with a documented extractor change | `reader-formats/src/pdf.rs` tests |
+| Storage | Done | `reader-storage/tests/v1_compatibility.rs` opens a v1 `library.db` |
+| Export/import | Done | v1 export reproduced from the v1 database; merge rules unit-tested |
+| Commands | Done | `reader-core/tests/command_parity.rs`, 263 v1 cases |
+| Navigation | Done | `reader-app/tests/executor_contract.rs` |
+| Rendering | Done | `reader-core/tests/render_parity.rs`, 12,050 v1 cases |
+| Reading pace | Done | `reader-core/src/pace.rs` tests, executor pace tests |
+| Command history | Done | redaction on write and on open, including legacy rows |
+| Locale/themes | Done | `reader-core/src/locale.rs`, `theme.rs` tests |
+| Screen/TUI | Pending | `reader-tui` not yet written |
+| Settings lifecycle | Partial | storage and command paths done; overlay lifecycle pending |
+| Shortcuts | Partial | catalogue done; panel behavior pending |
+| Library UX | Partial | discovery, sorting, tags, and notes done; overlays pending |
+| Hot-path I/O | Pending | prepared-statement reuse and write throttling not yet measured |
+| Render cache | Partial | chapter line-count cache done; changed-line output pending |
+| Layout rendering | Partial | geometry done; frame composition pending |
+| Toggl | Pending | `reader-integrations` not yet written |
+| Startup CLI | Pending | binary not yet written |
+
+## Inherited constraints
+
+Two v1 behaviors are reproduced deliberately even though they are defects, because
+changing them would break stored data or established output:
+
+- `chapters.id` is a global primary key, so two books whose chapter hrefs and
+  indexes collide cannot both be stored. The id derivation (`sha1("<href>:<index>")`)
+  does not include the book, so this is reachable in principle. Fixing it means a
+  schema migration and is out of scope for the parity gate.
+- Wrapping discards leading whitespace, so a list item's indent is lost in plain
+  mode. This is visible in v1 output and pinned by the render golden files.
+
 ## Acceptance rule
 
 A seam reaches parity when its Rust tests cover the observable cases above against shared fixtures or equivalent golden outputs. The complete transition requires every seam in this matrix and a reversible data migration. Performance is a separate pending gate: [Measure the v1 performance baseline](https://github.com/fe-m-bueno/cli-stealth-reader/issues/32) defines the procedure and raw baseline, then [Set measurable v2 performance acceptance budgets](https://github.com/fe-m-bueno/cli-stealth-reader/issues/30) records the numeric thresholds. Files in `docs/plans/` that are not implemented in v1 remain roadmap items rather than parity requirements.

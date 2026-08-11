@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/reader-app",
   "crates/reader-core",
   "crates/reader-formats",
   "crates/reader-storage",
@@ -12,6 +13,7 @@ edition = "2024"
 rust-version = "1.85"
 
 [workspace.dependencies]
+reader-app = { path = "crates/reader-app" }
 reader-core = { path = "crates/reader-core" }
 reader-formats = { path = "crates/reader-formats" }
 reader-storage = { path = "crates/reader-storage" }

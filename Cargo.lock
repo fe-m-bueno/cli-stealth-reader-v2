@@ -717,6 +717,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
 
 [[package]]
+name = "reader-app"
+version = "0.1.0"
+dependencies = [
+ "reader-core",
+ "reader-formats",
+ "reader-storage",
+ "serde_json",
+]
+
+[[package]]
 name = "reader-core"
 version = "0.1.0"
 dependencies = [
