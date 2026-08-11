@@ -46,15 +46,33 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Reading pace | Done | `reader-core/src/pace.rs` tests, executor pace tests |
 | Command history | Done | redaction on write and on open, including legacy rows |
 | Locale/themes | Done | `reader-core/src/locale.rs`, `theme.rs` tests |
-| Screen/TUI | Pending | `reader-tui` not yet written |
-| Settings lifecycle | Partial | storage and command paths done; overlay lifecycle pending |
-| Shortcuts | Partial | catalogue done; panel behavior pending |
-| Library UX | Partial | discovery, sorting, tags, and notes done; overlays pending |
-| Hot-path I/O | Pending | prepared-statement reuse and write throttling not yet measured |
-| Render cache | Partial | chapter line-count cache done; changed-line output pending |
-| Layout rendering | Partial | geometry done; frame composition pending |
-| Toggl | Pending | `reader-integrations` not yet written |
-| Startup CLI | Pending | binary not yet written |
+| Screen/TUI | Done | `reader-tui` frame and session tests over a `TestBackend` |
+| Settings lifecycle | Partial | storage, commands, and the overlay are done; live preview of a draft is not |
+| Shortcuts | Partial | catalogue and overlay done; collapsing and in-panel search are not |
+| Library UX | Partial | discovery, sorting, tags, notes, and pickers done; fuzzy filtering inside overlays is not |
+| Hot-path I/O | Partial | prepared statements and indexes done; write throttling is not |
+| Render cache | Partial | chapter line-count cache done; changed-line-only output is not |
+| Layout rendering | Done | geometry and frame composition, asserted from buffers |
+| Toggl | Done | `reader-integrations`, 46 tests against recorded responses |
+| Startup CLI | Done | `--resume`, an optional file, and the argument tests |
+
+### What the remaining partials are
+
+None of them block reading a book; each is a refinement of a surface that already
+works:
+
+- **Settings live preview.** v1 previewed a draft as you moved through the
+  settings tabs and discarded it on cancel. v2 applies a setting when it is
+  chosen. Both persist the same values.
+- **Shortcut panel collapsing and search.** The panel lists every binding and
+  scrolls; it does not yet fold categories or filter as you type.
+- **Fuzzy filtering inside overlays.** `reader-core::fuzzy` is ported and tested;
+  the overlays do not yet call it.
+- **Write throttling.** v1 coalesced position writes on a 1.5-second window. v2
+  writes the position on exit, which is fewer writes, but does not yet coalesce
+  during a session.
+- **Changed-line-only repaint.** Ratatui already diffs its buffer, so the
+  observable behavior matches; v1's explicit line cache has no v2 equivalent.
 
 ## Defects found in v1 and fixed here
 
