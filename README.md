@@ -109,6 +109,7 @@ stealth-reader --resume                 # retoma o livro aberto mais recentement
 stealth-reader ./livros/dune.epub      # importa e abre um arquivo
 stealth-reader ./quadrinhos/comic.cbz
 stealth-reader ./artigo.pdf
+stealth-reader update                   # atualiza para a última release
 ```
 
 Também estão disponíveis as opções globais do binário:
@@ -122,6 +123,9 @@ stealth-reader [--resume] <FILE>
 
 Se um arquivo for informado junto com `--resume`, o arquivo explícito tem
 precedência.
+
+O comando stealth-reader update (ou stealth-reader upgrade) baixa o artefato da
+última release, verifica o SHA-256 e substitui o binário instalado.
 
 ### O que acontece ao iniciar
 

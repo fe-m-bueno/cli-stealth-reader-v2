@@ -12,6 +12,8 @@ use clap::Parser;
 use reader_app::{CommandContext, ReaderState};
 use reader_storage::{AppPaths, Storage};
 
+mod update;
+
 /// Read EPUB, CBZ, and PDF books in the terminal, in plain text or disguised as
 /// code.
 ///
@@ -22,6 +24,9 @@ use reader_storage::{AppPaths, Storage};
 #[derive(Debug, Parser)]
 #[command(name = "stealth-reader", version, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+
     /// Reopen the most recently read book at its saved position.
     #[arg(long)]
     resume: bool,
@@ -29,6 +34,13 @@ struct Args {
     /// Import and open this file instead of showing the library.
     #[arg(value_name = "FILE")]
     file: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Command {
+    /// Download and install the latest published release.
+    #[command(alias = "upgrade")]
+    Update,
 }
 
 impl From<&Args> for reader_app::LaunchOptions {
@@ -61,6 +73,10 @@ fn now_millis() -> i64 {
 }
 
 fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    if args.command.is_some() {
+        return update::run();
+    }
+
     // The reader is a full-screen application, so a redirected or piped session
     // cannot work. Saying so plainly beats an errno from deep inside the
     // terminal setup.
@@ -95,7 +111,7 @@ fn run(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use clap::Parser;
 
-    use super::Args;
+    use super::{Args, Command};
 
     #[test]
     fn the_default_invocation_opens_the_library() {
@@ -124,5 +140,14 @@ mod tests {
     #[test]
     fn an_unknown_flag_is_rejected_rather_than_ignored() {
         assert!(Args::try_parse_from(["stealth-reader", "--nope"]).is_err());
+    }
+
+    #[test]
+    fn update_is_available_with_an_upgrade_alias() {
+        let update = Args::parse_from(["stealth-reader", "update"]);
+        assert!(matches!(update.command, Some(Command::Update)));
+
+        let upgrade = Args::parse_from(["stealth-reader", "upgrade"]);
+        assert!(matches!(upgrade.command, Some(Command::Update)));
     }
 }
