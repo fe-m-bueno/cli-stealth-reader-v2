@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 reader-app.workspace = true
 reader-core.workspace = true
+reader-integrations.workspace = true
 reader-storage.workspace = true
 
 ratatui.workspace = true

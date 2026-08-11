@@ -695,10 +695,16 @@ fn dispatch(
         "export" => Ok(crate::library::export(state, storage, parsed, context)?),
         "import" => Ok(crate::library::import(state, storage, parsed)?),
 
-        // The Toggl integration lives in its own crate and is wired in by the
-        // composition root.
         "toggl" => {
-            state.status = "Toggl integration is not available in this build.".to_owned();
+            // The integration owns its HTTP client; the reader only supplies
+            // storage and the clock.
+            let settings = crate::toggl::StorageSettings::new(storage);
+            let transport = reader_integrations::NetworkTransport;
+            let client = reader_integrations::TogglClient::new(&settings, &transport, context.now);
+            let outcome = crate::toggl::run(parsed, &client);
+            if let Some(prefill) = crate::toggl::apply_outcome(state, outcome) {
+                state.command_prefill = Some(prefill);
+            }
             Ok(())
         }
 

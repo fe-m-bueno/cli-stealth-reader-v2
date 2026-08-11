@@ -9,6 +9,7 @@ pub mod executor;
 pub mod layout;
 pub mod library;
 pub mod state;
+pub mod toggl;
 
 pub use executor::{
     CommandContext, ExecutionError, apply_search_hit, execute_command, import_and_open, open_book,

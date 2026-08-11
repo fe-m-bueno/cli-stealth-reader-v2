@@ -374,3 +374,29 @@ fn q_sets_the_quit_flag_the_loop_watches() {
     session.press(KeyCode::Char('q'));
     assert!(session.state.should_quit);
 }
+
+#[test]
+fn a_toggl_command_without_a_connection_says_what_to_do() {
+    let mut session = Session::start("toggl");
+
+    session.command("toggl auth");
+
+    let screen = session.screen();
+    assert!(
+        screen.contains("focus.toggl.com/settings"),
+        "the footer should point at the key page:\n{screen}"
+    );
+}
+
+#[test]
+fn a_running_timer_shows_in_the_footer_next_to_progress() {
+    let mut session = Session::start("timer");
+    session.command_bar.timer = Some("Toggl 25m · Reading".to_owned());
+
+    let screen = session.screen();
+
+    assert!(
+        screen.contains("Toggl 25m · Reading"),
+        "the timer belongs in the footer:\n{screen}"
+    );
+}

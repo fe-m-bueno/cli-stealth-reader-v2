@@ -147,6 +147,36 @@ fn save_position(state: &mut ReaderState, storage: &Storage) {
 /// and `apply` directly, so the loop does not need to be generic over backends.
 type ReaderTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
+/// Update the footer's timer line, polling Focus only when the interval allows.
+fn refresh_timer_line(
+    state: &ReaderState,
+    storage: &Storage,
+    command_bar: &mut CommandBar,
+    last_refresh: &mut Option<i64>,
+) {
+    let settings = reader_app::toggl::StorageSettings::new(storage);
+    let transport = reader_integrations::NetworkTransport;
+    let now = now_millis();
+    let client = reader_integrations::TogglClient::new(&settings, &transport, now);
+    if !client.is_connected() {
+        command_bar.timer = None;
+        return;
+    }
+
+    let context = CommandContext {
+        now,
+        content_width: state.viewport.width,
+        body_height: state.viewport.height,
+    };
+    if reader_app::toggl::should_refresh(*last_refresh, context) {
+        *last_refresh = Some(now);
+        // A failed poll leaves the last known timer on screen rather than
+        // blanking it; the elapsed time is computed locally anyway.
+        let _ = client.refresh_current_entry();
+    }
+    command_bar.timer = client.running_timer_line();
+}
+
 fn event_loop(
     terminal: &mut ReaderTerminal,
     state: &mut ReaderState,
@@ -154,7 +184,13 @@ fn event_loop(
     command_bar: &mut CommandBar,
     mouse_captured: &mut bool,
 ) -> Result<(), AppError> {
+    let mut last_timer_refresh: Option<i64> = None;
+
     while !state.should_quit {
+        // The footer shows a running Toggl timer, counted locally from its start
+        // so the display stays accurate between the rare background polls.
+        refresh_timer_line(state, storage, command_bar, &mut last_timer_refresh);
+
         terminal.draw(|frame| draw(frame, state, command_bar))?;
 
         // Mouse capture follows the setting, which a command can change.

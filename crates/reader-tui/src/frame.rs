@@ -27,6 +27,9 @@ pub struct CommandBar {
     pub buffer: String,
     /// Cursor position in characters.
     pub cursor: usize,
+    /// A running Toggl timer, when one is known. The integration owns the text;
+    /// the footer only places it.
+    pub timer: Option<String>,
 }
 
 /// Rows the footer needs: the status line, plus the command bar when active.
@@ -221,6 +224,12 @@ fn draw_footer(
 ) {
     let layout = state.layout(footer_height(command_bar));
     let progress = progress_text(state, layout.content_width, layout.body_height);
+    // A running timer sits alongside the progress, since both answer "how long".
+    let progress = match &command_bar.timer {
+        Some(timer) if progress.is_empty() => timer.clone(),
+        Some(timer) => format!("{timer} · {progress}"),
+        None => progress,
+    };
     let status = state.status.clone();
 
     let mut rows: Vec<Line<'static>> = Vec::new();
@@ -298,6 +307,11 @@ fn overlay_entries(state: &ReaderState) -> (String, Vec<String>) {
             "Manual".to_owned(),
             reader_core::command::command_help(state.help_command.as_deref(), None),
         ),
+        // The diagnostics overlay doubles as the report surface for
+        // integrations, which is why an integration report wins here.
+        Overlay::Diagnostics if !state.integration_report.is_empty() => {
+            ("Toggl".to_owned(), state.integration_report.clone())
+        }
         Overlay::Diagnostics => (
             "Import diagnostics".to_owned(),
             state
@@ -535,6 +549,7 @@ mod tests {
             active: true,
             buffer: "goto 2".to_owned(),
             cursor: 6,
+            timer: None,
         };
         assert_eq!(footer_height(&inactive), 1);
         assert_eq!(footer_height(&active), 2);

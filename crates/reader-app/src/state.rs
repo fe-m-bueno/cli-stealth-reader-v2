@@ -133,6 +133,12 @@ pub struct ReaderState {
     pub library_directory: std::path::PathBuf,
     pub discoveries: Vec<reader_formats::Discovery>,
 
+    /// Lines an integration wants shown in the diagnostics overlay.
+    pub integration_report: Vec<String>,
+    /// Text a command wants typed into the command bar, so the reader can
+    /// complete it — used when Toggl needs a workspace URL pasted.
+    pub command_prefill: Option<String>,
+
     pub should_quit: bool,
     /// Cached per-chapter line counts, invalidated whenever rendering inputs change.
     layout_metrics: Option<LayoutMetrics>,
@@ -176,6 +182,8 @@ impl ReaderState {
             books_tag_filter: None,
             library_directory: std::env::current_dir().unwrap_or_default(),
             discoveries: Vec::new(),
+            integration_report: Vec::new(),
+            command_prefill: None,
             should_quit: false,
             layout_metrics: None,
         }

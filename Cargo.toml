@@ -4,6 +4,7 @@ members = [
   "crates/reader-bench",
   "crates/reader-core",
   "crates/reader-formats",
+  "crates/reader-integrations",
   "crates/reader-storage",
   "crates/reader-tui",
   "crates/stealth-reader",
@@ -19,6 +20,7 @@ rust-version = "1.85"
 reader-app = { path = "crates/reader-app" }
 reader-core = { path = "crates/reader-core" }
 reader-formats = { path = "crates/reader-formats" }
+reader-integrations = { path = "crates/reader-integrations" }
 reader-storage = { path = "crates/reader-storage" }
 reader-tui = { path = "crates/reader-tui" }
 
@@ -41,6 +43,9 @@ md-5 = "0.11"
 # Storage
 rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
+
+# Integrations
+ureq = { version = "3", features = ["json"] }
 
 # Terminal
 ratatui = "0.30"

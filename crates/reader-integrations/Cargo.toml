@@ -1,5 +1,5 @@
 [package]
-name = "reader-app"
+name = "reader-integrations"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,7 @@ workspace = true
 
 [dependencies]
 reader-core.workspace = true
-reader-formats.workspace = true
-reader-integrations.workspace = true
-reader-storage.workspace = true
 
+serde.workspace = true
 serde_json.workspace = true
+ureq.workspace = true

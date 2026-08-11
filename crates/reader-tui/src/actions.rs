@@ -207,6 +207,14 @@ pub fn apply(
         Action::RunCommand(command) => execute_command(state, storage, command, context)?,
     }
 
+    // A command can ask for text to be typed for the reader — Toggl setup needs
+    // a workspace URL pasted after the prefix it supplies.
+    if let Some(prefill) = state.command_prefill.take() {
+        command_bar.active = true;
+        command_bar.cursor = prefill.chars().count();
+        command_bar.buffer = prefill;
+    }
+
     clamp_cursors(state, storage, context);
     Ok(())
 }
@@ -265,6 +273,9 @@ fn overlay_entry_count(state: &ReaderState, storage: &Storage) -> usize {
         Overlay::Themes => reader_core::theme::AppearanceThemeId::ALL.len(),
         Overlay::Settings => reader_core::SettingsTab::ALL.len(),
         Overlay::Keys => reader_core::KEYBOARD_SHORTCUTS.len(),
+        Overlay::Diagnostics if !state.integration_report.is_empty() => {
+            state.integration_report.len()
+        }
         Overlay::Diagnostics => state
             .current_book
             .as_ref()
