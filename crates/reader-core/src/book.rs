@@ -1,8 +1,62 @@
 use serde::{Deserialize, Serialize};
 
+/// Smallest canonical unit rendered by plain and stealth modes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum CanonicalBlock {
+    Heading {
+        id: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        level: Option<u8>,
+    },
+    Paragraph {
+        id: String,
+        text: String,
+    },
+    Blockquote {
+        id: String,
+        text: String,
+    },
+    ListItem {
+        id: String,
+        text: String,
+    },
+    SceneBreak {
+        id: String,
+        text: String,
+    },
+    Image {
+        id: String,
+        text: String,
+        #[serde(rename = "imageSource", skip_serializing_if = "Option::is_none")]
+        image_source: Option<String>,
+    },
+    Anchor {
+        id: String,
+        text: String,
+        #[serde(rename = "anchorId", skip_serializing_if = "Option::is_none")]
+        anchor_id: Option<String>,
+    },
+}
+
+impl CanonicalBlock {
+    #[must_use]
+    pub const fn kind(&self) -> BlockKind {
+        match self {
+            Self::Heading { .. } => BlockKind::Heading,
+            Self::Paragraph { .. } => BlockKind::Paragraph,
+            Self::Blockquote { .. } => BlockKind::Blockquote,
+            Self::ListItem { .. } => BlockKind::ListItem,
+            Self::SceneBreak { .. } => BlockKind::SceneBreak,
+            Self::Image { .. } => BlockKind::Image,
+            Self::Anchor { .. } => BlockKind::Anchor,
+        }
+    }
+}
+
 /// Structural meaning extracted from an ebook source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Heading,
     Paragraph,
@@ -11,22 +65,6 @@ pub enum BlockKind {
     SceneBreak,
     Image,
     Anchor,
-}
-
-/// Smallest canonical unit rendered by plain and stealth modes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CanonicalBlock {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub kind: BlockKind,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub image_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub anchor_id: Option<String>,
 }
 
 /// A reading-order chapter, including nested table-of-contents depth.
@@ -83,20 +121,17 @@ mod tests {
 
     #[test]
     fn canonical_block_preserves_the_v1_json_contract() {
-        let block = CanonicalBlock {
+        let block = CanonicalBlock::Heading {
             id: "chapter-1:block-0".into(),
-            kind: BlockKind::ListItem,
             text: "Read this".into(),
             level: Some(2),
-            image_source: None,
-            anchor_id: None,
         };
 
         assert_eq!(
             serde_json::to_value(block).expect("canonical block should serialize"),
             json!({
                 "id": "chapter-1:block-0",
-                "type": "list-item",
+                "type": "heading",
                 "text": "Read this",
                 "level": 2
             })
@@ -113,8 +148,13 @@ mod tests {
         }))
         .expect("v1 canonical JSON should deserialize");
 
-        assert_eq!(block.kind, BlockKind::Image);
-        assert_eq!(block.image_source.as_deref(), Some("images/001.jpg"));
-        assert_eq!(block.level, None);
+        assert_eq!(block.kind(), BlockKind::Image);
+        assert!(matches!(
+            block,
+            CanonicalBlock::Image {
+                image_source: Some(source),
+                ..
+            } if source == "images/001.jpg"
+        ));
     }
 }

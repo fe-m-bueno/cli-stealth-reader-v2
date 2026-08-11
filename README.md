@@ -12,6 +12,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-The workspace starts with a domain crate and a thin composition-root binary. Format parsing, storage, integrations, and the TUI will be added as focused crates when their compatibility seams are ported.
+The workspace starts with the format-independent domain crate. Format parsing, storage, integrations, the TUI, and its thin composition-root binary will be added as focused crates through working vertical slices.
 
 See [the migration architecture](docs/migration/architecture.md), [the v1 compatibility contract](docs/migration/compatibility-contract.md), and [the reference-repository research](docs/research/codex-and-grok-build-architecture.md).
