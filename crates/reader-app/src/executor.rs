@@ -356,8 +356,7 @@ fn dispatch(
         }
 
         "chapters" => {
-            state.overlay = Overlay::Chapters;
-            state.overlay_cursor = state.chapter_index;
+            state.open_overlay(Overlay::Chapters, state.chapter_index);
             state.status = "Opened table of contents".to_owned();
             Ok(())
         }
@@ -391,8 +390,7 @@ fn dispatch(
                 return message(NO_BOOK);
             };
             let bookmarks = storage.bookmarks(&book_id)?;
-            state.overlay = Overlay::Bookmarks;
-            state.overlay_cursor = 0;
+            state.open_overlay(Overlay::Bookmarks, 0);
             state.status = if bookmarks.is_empty() {
                 "No bookmarks in this book yet.".to_owned()
             } else {
@@ -568,11 +566,11 @@ fn dispatch(
 
         "colorscheme" => {
             if parsed.has_flag("list") || parsed.args.is_empty() {
-                state.overlay = Overlay::ColorSchemes;
-                state.overlay_cursor = ColorSchemeId::ALL
+                let selected = ColorSchemeId::ALL
                     .iter()
                     .position(|scheme| *scheme == state.settings.theme_id)
                     .unwrap_or(0);
+                state.open_overlay(Overlay::ColorSchemes, selected);
                 state.status = "Opened colorscheme picker".to_owned();
                 return Ok(());
             }
@@ -590,11 +588,11 @@ fn dispatch(
 
         "theme" => {
             if parsed.has_flag("list") || parsed.args.is_empty() {
-                state.overlay = Overlay::Themes;
-                state.overlay_cursor = AppearanceThemeId::ALL
+                let selected = AppearanceThemeId::ALL
                     .iter()
                     .position(|theme| *theme == state.settings.appearance_theme_id)
                     .unwrap_or(0);
+                state.open_overlay(Overlay::Themes, selected);
                 state.status = "Opened theme picker".to_owned();
                 return Ok(());
             }
@@ -611,22 +609,22 @@ fn dispatch(
         }
 
         "settings" => {
-            state.overlay = Overlay::Settings;
-            state.overlay_cursor = 0;
-            state.status = "Opened reader settings.".to_owned();
+            state.open_overlay(Overlay::Settings, 0);
+            // Opening remembers the current settings, so cancelling can restore
+            // them after the panel has previewed something else.
+            crate::settings_panel::open(state);
+            state.status = "Space changes · ←/→ tabs · Enter saves · Esc cancels".to_owned();
             Ok(())
         }
 
         "keyboardshortcuts" => {
-            state.overlay = Overlay::Keys;
-            state.overlay_cursor = 0;
-            state.status = "Opened keyboard shortcuts.".to_owned();
+            state.open_overlay(Overlay::Keys, 0);
+            state.status = "Enter folds a group · z folds all · / searches".to_owned();
             Ok(())
         }
 
         "help" => {
-            state.overlay = Overlay::Help;
-            state.overlay_cursor = 0;
+            state.open_overlay(Overlay::Help, 0);
             state.help_command = if parsed.has_flag("all") {
                 None
             } else {
@@ -907,8 +905,7 @@ fn change_book(
 
     if query.trim().is_empty() {
         state.books_tag_filter = None;
-        state.overlay = Overlay::Books;
-        state.overlay_cursor = 0;
+        state.open_overlay(Overlay::Books, 0);
         state.status = if books.is_empty() {
             "No books in the library yet.".to_owned()
         } else {
@@ -944,8 +941,7 @@ fn change_book(
         return Ok(());
     }
 
-    state.overlay = Overlay::Books;
-    state.overlay_cursor = 0;
+    state.open_overlay(Overlay::Books, 0);
     if tagged.is_empty() {
         state.books_tag_filter = None;
         state.status = "No exact match. Opened library picker.".to_owned();
@@ -1013,8 +1009,7 @@ fn notes(
     };
     if parsed.has_flag("list") {
         let notes = storage.notes(&book_id)?;
-        state.overlay = Overlay::Notes;
-        state.overlay_cursor = 0;
+        state.open_overlay(Overlay::Notes, 0);
         state.status = if notes.is_empty() {
             "No notes for this book yet.".to_owned()
         } else {

@@ -105,11 +105,13 @@ impl Session {
         let Self {
             terminal,
             state,
+            storage,
             command_bar,
             ..
         } = self;
+        let entries = reader_app::visible_entries(state, storage, 1_700_000_000_000);
         terminal
-            .draw(|frame| draw(frame, state, command_bar))
+            .draw(|frame| draw(frame, state, command_bar, &entries))
             .expect("drawing succeeds");
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
@@ -373,6 +375,170 @@ fn q_sets_the_quit_flag_the_loop_watches() {
     let mut session = Session::start("quit");
     session.press(KeyCode::Char('q'));
     assert!(session.state.should_quit);
+}
+
+#[test]
+fn an_overlay_narrows_as_the_reader_types_and_opens_what_is_left() {
+    let mut session = Session::start("overlay-search");
+    session.press_with(KeyCode::Char('T'), KeyModifiers::NONE);
+    assert_eq!(session.state.overlay, Overlay::Chapters);
+
+    session.press(KeyCode::Char('/'));
+    for character in "section".chars() {
+        session.press(KeyCode::Char(character));
+    }
+
+    let screen = session.screen();
+    assert!(
+        screen.contains("Chapters · /section"),
+        "the query belongs in the overlay title:\n{screen}"
+    );
+    let listed = reader_app::visible_entries(&session.state, &session.storage, 0);
+    assert_eq!(
+        listed
+            .iter()
+            .map(|row| row.display.trim())
+            .collect::<Vec<_>>(),
+        vec!["Section A"],
+        "only the matching chapter is listed"
+    );
+
+    // Confirming acts on the filtered row, not on whatever was at that index.
+    session.press(KeyCode::Enter);
+    assert_eq!(session.state.overlay, Overlay::None);
+    assert_eq!(
+        session.state.chapter_index, 1,
+        "the second chapter is the one that matched"
+    );
+}
+
+#[test]
+fn a_query_that_matches_nothing_says_so_instead_of_looking_broken() {
+    let mut session = Session::start("overlay-empty");
+    session.press_with(KeyCode::Char('T'), KeyModifiers::NONE);
+    session.press(KeyCode::Char('/'));
+    for character in "zzz".chars() {
+        session.press(KeyCode::Char(character));
+    }
+
+    let screen = session.screen();
+    assert!(screen.contains("Nothing matches."), "{screen}");
+}
+
+#[test]
+fn leaving_search_restores_the_whole_list() {
+    let mut session = Session::start("overlay-escape");
+    session.press_with(KeyCode::Char('T'), KeyModifiers::NONE);
+    session.press(KeyCode::Char('/'));
+    session.press(KeyCode::Char('z'));
+    session.press(KeyCode::Esc);
+
+    assert_eq!(
+        session.state.overlay,
+        Overlay::Chapters,
+        "escape leaves the search, not the overlay"
+    );
+    assert!(session.state.overlay_search.query().is_empty());
+    let screen = session.screen();
+    assert!(screen.contains("Chapter One"), "{screen}");
+}
+
+#[test]
+fn the_shortcut_panel_folds_a_group_and_keeps_the_rest() {
+    let mut session = Session::start("shortcuts-fold");
+    session.press(KeyCode::Char('?'));
+    assert_eq!(session.state.overlay, Overlay::Keys);
+
+    let expanded = session.screen();
+    assert!(expanded.contains("▾ Navigation"), "{expanded}");
+    assert!(expanded.contains("Scroll up"), "{expanded}");
+
+    // The cursor starts on the first header, so confirming folds it.
+    session.press(KeyCode::Enter);
+    let folded = session.screen();
+
+    assert_eq!(session.state.overlay, Overlay::Keys, "the panel stays open");
+    assert!(folded.contains("▸ Navigation"), "{folded}");
+    assert!(!folded.contains("Scroll up"), "{folded}");
+    assert!(
+        folded.contains("Commands"),
+        "the other groups remain:\n{folded}"
+    );
+}
+
+#[test]
+fn the_settings_panel_previews_a_change_and_can_move_between_tabs() {
+    let mut session = Session::start("settings");
+    session.press_with(KeyCode::Char('S'), KeyModifiers::NONE);
+    assert_eq!(session.state.overlay, Overlay::Settings);
+
+    let opened = session.screen();
+    assert!(opened.contains("[Themes]"), "{opened}");
+    assert!(opened.contains("Colorscheme"), "{opened}");
+
+    // Move off the tab strip onto the first setting and change it with space.
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Char(' '));
+
+    assert_eq!(
+        session.state.settings.theme_id.as_str(),
+        "claude",
+        "the setting changed"
+    );
+    assert_eq!(
+        session.state.theme.scheme, session.state.settings.theme_id,
+        "and the theme previewed it"
+    );
+
+    session.press(KeyCode::Right);
+    let reading_tab = session.screen();
+    assert!(reading_tab.contains("[Reading]"), "{reading_tab}");
+    assert!(reading_tab.contains("Code density"), "{reading_tab}");
+}
+
+#[test]
+fn cancelling_the_settings_panel_puts_everything_back() {
+    let mut session = Session::start("settings-cancel");
+    let before = session.state.settings;
+
+    session.press_with(KeyCode::Char('S'), KeyModifiers::NONE);
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Char(' '));
+    assert_ne!(session.state.settings, before);
+
+    session.press(KeyCode::Esc);
+
+    assert_eq!(session.state.overlay, Overlay::None);
+    assert_eq!(session.state.settings, before, "the preview was discarded");
+    assert_eq!(
+        session.storage.settings().expect("load").theme_id,
+        before.theme_id,
+        "and nothing reached the database"
+    );
+}
+
+#[test]
+fn saving_the_settings_panel_persists_what_was_previewed() {
+    let mut session = Session::start("settings-save");
+    session.press_with(KeyCode::Char('S'), KeyModifiers::NONE);
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Char(' '));
+    session.press(KeyCode::Char(' '));
+    let previewed = session.state.settings;
+
+    session.press(KeyCode::Enter);
+
+    assert_eq!(session.state.overlay, Overlay::None);
+    assert_eq!(session.state.status, "Settings saved.");
+    assert_eq!(
+        session.storage.settings().expect("load"),
+        previewed,
+        "the previewed settings reached the database"
+    );
+    assert_eq!(
+        session.state.settings, previewed,
+        "and the reader keeps them"
+    );
 }
 
 #[test]

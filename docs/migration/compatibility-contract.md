@@ -47,32 +47,41 @@ The contract is pinned to [`fe-m-bueno/cli-stealth-reader` at `2b89907546e740525
 | Command history | Done | redaction on write and on open, including legacy rows |
 | Locale/themes | Done | `reader-core/src/locale.rs`, `theme.rs` tests |
 | Screen/TUI | Done | `reader-tui` frame and session tests over a `TestBackend` |
-| Settings lifecycle | Partial | storage, commands, and the overlay are done; live preview of a draft is not |
-| Shortcuts | Partial | catalogue and overlay done; collapsing and in-panel search are not |
-| Library UX | Partial | discovery, sorting, tags, notes, and pickers done; fuzzy filtering inside overlays is not |
-| Hot-path I/O | Partial | prepared statements and indexes done; write throttling is not |
+| Settings lifecycle | Done | `reader-app/src/settings_panel.rs`, tab and cancel session tests |
+| Shortcuts | Done | `reader-app/src/shortcuts_panel.rs`, folding and search tests |
+| Library UX | Done | `reader-app/src/overlay.rs`, fuzzy filtering over every overlay |
+| Hot-path I/O | Done | `reader-core/src/throttle.rs`, 1.5s coalescing driven by the loop |
 | Render cache | Partial | chapter line-count cache done; changed-line-only output is not |
 | Layout rendering | Done | geometry and frame composition, asserted from buffers |
 | Toggl | Done | `reader-integrations`, 46 tests against recorded responses |
 | Startup CLI | Done | `--resume`, an optional file, and the argument tests |
 
-### What the remaining partials are
+### What the remaining partial is
 
-None of them block reading a book; each is a refinement of a surface that already
-works:
-
-- **Settings live preview.** v1 previewed a draft as you moved through the
-  settings tabs and discarded it on cancel. v2 applies a setting when it is
-  chosen. Both persist the same values.
-- **Shortcut panel collapsing and search.** The panel lists every binding and
-  scrolls; it does not yet fold categories or filter as you type.
-- **Fuzzy filtering inside overlays.** `reader-core::fuzzy` is ported and tested;
-  the overlays do not yet call it.
-- **Write throttling.** v1 coalesced position writes on a 1.5-second window. v2
-  writes the position on exit, which is fewer writes, but does not yet coalesce
-  during a session.
 - **Changed-line-only repaint.** Ratatui already diffs its buffer, so the
   observable behavior matches; v1's explicit line cache has no v2 equivalent.
+
+### Refinements closed since the first pass
+
+The four seams that were partial are now complete, and each one came out a little
+better than v1 rather than merely equal:
+
+- **Settings live preview.** v1 previewed a draft and discarded it on cancel; v2
+  does the same, backing the draft with `settings_backup` so `Esc` restores
+  exactly what was on screen before the panel opened, and `Enter` is the only
+  point the database hears about it.
+- **Shortcut panel collapsing and search.** Categories fold with `z`, and the
+  same `/` filter as every other overlay applies here, matching a binding by its
+  keys or its description.
+- **Fuzzy filtering inside overlays.** Every overlay is now built from one
+  `OverlayEntry` list, so `/` narrows chapters, books, bookmarks, notes, and
+  shortcuts alike — and confirming acts on the visible row, which the previous
+  index-based lookup could get wrong once a list was filtered.
+- **Write throttling.** `WriteThrottle` coalesces on the same 1.5-second window
+  as v1, but with the leading edge kept: the first change of a burst is written
+  immediately, so a crash mid-scroll loses at most one window rather than the
+  whole session. The clock is a parameter, so the whole thing is unit-tested
+  without sleeping.
 
 ## Defects found in v1 and fixed here
 

@@ -8,6 +8,9 @@
 pub mod executor;
 pub mod layout;
 pub mod library;
+pub mod overlay;
+pub mod settings_panel;
+pub mod shortcuts_panel;
 pub mod state;
 pub mod toggl;
 
@@ -16,4 +19,5 @@ pub use executor::{
     persist_pace,
 };
 pub use layout::{OverlayLayout, Viewport, ViewportLayout, compute_layout};
+pub use overlay::{EntryTarget, OverlayEntry, OverlaySearch, visible_entries};
 pub use state::{MAX_NAV_HISTORY, NavEntry, Overlay, ReaderState, SearchHit, SearchState};

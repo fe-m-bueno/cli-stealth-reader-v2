@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Style as TuiStyle;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use reader_app::{Overlay, ReaderState};
+use reader_app::{Overlay, OverlayEntry, ReaderState};
 use reader_core::pace::{
     EstimateScope, format_time_left, remaining_words_in_book, remaining_words_in_chapter,
 };
@@ -39,7 +39,16 @@ pub fn footer_height(command_bar: &CommandBar) -> u16 {
 }
 
 /// Draw the whole frame.
-pub fn draw(frame: &mut Frame<'_>, state: &mut ReaderState, command_bar: &CommandBar) {
+///
+/// `overlay_entries` are supplied by the caller because building them needs the
+/// database, and drawing must not touch it: the same list the frame shows is the
+/// one the cursor indexes and confirming acts on.
+pub fn draw(
+    frame: &mut Frame<'_>,
+    state: &mut ReaderState,
+    command_bar: &CommandBar,
+    overlay_entries: &[OverlayEntry],
+) {
     let area = frame.area();
     state.viewport = reader_app::Viewport::new(area.width, area.height);
     let layout = state.layout(footer_height(command_bar));
@@ -61,7 +70,7 @@ pub fn draw(frame: &mut Frame<'_>, state: &mut ReaderState, command_bar: &Comman
     draw_body(frame, body_area, state, &layout);
     draw_footer(frame, footer_area, state, command_bar);
     if state.overlay != Overlay::None {
-        draw_overlay(frame, body_area, state);
+        draw_overlay(frame, body_area, state, overlay_entries);
     }
 }
 
@@ -266,91 +275,46 @@ fn draw_footer(
     frame.render_widget(Paragraph::new(rows), area);
 }
 
-/// Entries an overlay lists, and which one is selected.
-fn overlay_entries(state: &ReaderState) -> (String, Vec<String>) {
-    match state.overlay {
-        Overlay::Chapters => (
-            "Chapters".to_owned(),
-            state
-                .current_book
-                .as_ref()
-                .map(|book| {
-                    book.chapters
-                        .iter()
-                        .map(|chapter| format!("{}{}", "  ".repeat(chapter.depth), chapter.title))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        ),
-        Overlay::ColorSchemes => (
-            "Colorschemes".to_owned(),
-            reader_core::ColorSchemeId::ALL
-                .iter()
-                .map(|scheme| scheme.label().to_owned())
-                .collect(),
-        ),
-        Overlay::Themes => (
-            "Themes".to_owned(),
-            reader_core::theme::AppearanceThemeId::ALL
-                .iter()
-                .map(|theme| theme.label().to_owned())
-                .collect(),
-        ),
-        Overlay::Keys => (
-            "Keyboard shortcuts".to_owned(),
-            reader_core::KEYBOARD_SHORTCUTS
-                .iter()
-                .map(|shortcut| format!("{:<22} {}", shortcut.key, shortcut.description))
-                .collect(),
-        ),
-        Overlay::Help => (
-            "Manual".to_owned(),
-            reader_core::command::command_help(state.help_command.as_deref(), None),
-        ),
-        // The diagnostics overlay doubles as the report surface for
-        // integrations, which is why an integration report wins here.
-        Overlay::Diagnostics if !state.integration_report.is_empty() => {
-            ("Toggl".to_owned(), state.integration_report.clone())
-        }
-        Overlay::Diagnostics => (
-            "Import diagnostics".to_owned(),
-            state
-                .current_book
-                .as_ref()
-                .map(|book| {
-                    book.diagnostics
-                        .iter()
-                        .map(|diagnostic| diagnostic.message.clone())
-                        .collect()
-                })
-                .unwrap_or_default(),
-        ),
-        Overlay::FilePicker => (
-            "Add a book".to_owned(),
-            state
-                .discoveries
-                .iter()
-                .map(|item| item.file_name.clone())
-                .collect(),
-        ),
-        // Overlays whose contents come from the database are filled in by the
-        // caller before drawing; an empty list is the honest default.
-        Overlay::Books => ("Library".to_owned(), Vec::new()),
-        Overlay::Bookmarks => ("Bookmarks".to_owned(), Vec::new()),
-        Overlay::Notes => ("Notes".to_owned(), Vec::new()),
-        Overlay::Settings => (
-            "Settings".to_owned(),
-            reader_core::SettingsTab::ALL
-                .iter()
-                .map(|tab| tab.label().to_owned())
-                .collect(),
-        ),
-        Overlay::None => (String::new(), Vec::new()),
-    }
+/// The overlay's heading, including what is filtering it.
+fn overlay_title(state: &ReaderState) -> String {
+    let name = match state.overlay {
+        Overlay::Chapters => "Chapters",
+        Overlay::Books => "Library",
+        Overlay::Bookmarks => "Bookmarks",
+        Overlay::Notes => "Notes",
+        Overlay::ColorSchemes => "Colorschemes",
+        Overlay::Themes => "Themes",
+        Overlay::Settings => "Settings",
+        Overlay::Keys => "Keyboard shortcuts",
+        Overlay::Diagnostics if !state.integration_report.is_empty() => "Toggl",
+        Overlay::Diagnostics => "Import diagnostics",
+        Overlay::FilePicker => "Add a book",
+        Overlay::Help => "Manual",
+        Overlay::None => "",
+    };
+
+    // The library says how it is sorted; every overlay says what it is filtered by.
+    let sort = if state.overlay == Overlay::Books {
+        let arrow = match state.library_sort_direction {
+            reader_core::SortDirection::Ascending => '↑',
+            reader_core::SortDirection::Descending => '↓',
+        };
+        format!(" · {} {arrow}", state.library_sort_key.label())
+    } else {
+        String::new()
+    };
+    let search = if state.overlay_search.active {
+        format!(" · /{}", state.overlay_search.buffer)
+    } else if !state.overlay_search.query().is_empty() {
+        format!(" · {}", state.overlay_search.query())
+    } else {
+        String::new()
+    };
+    format!("{name}{sort}{search}")
 }
 
-fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState) {
-    let (title, entries) = overlay_entries(state);
+fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState, entries: &[OverlayEntry]) {
+    let title = overlay_title(state);
     let palette = &state.theme.palette;
 
     let overlay_area = if state.overlay.is_modal() || state.overlay == Overlay::Help {
@@ -377,6 +341,22 @@ fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState) {
     frame.render_widget(block, overlay_area);
 
     let height = inner.height as usize;
+    if entries.is_empty() {
+        let message = if state.overlay_search.query().is_empty() {
+            "Nothing here yet."
+        } else {
+            "Nothing matches."
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message,
+                to_tui_style(Style::fg(palette.dim)),
+            ))),
+            inner,
+        );
+        return;
+    }
+
     // Keep the cursor in view by scrolling the window around it.
     let start = state
         .overlay_cursor
@@ -394,7 +374,7 @@ fn draw_overlay(frame: &mut Frame<'_>, area: Rect, state: &ReaderState) {
             } else {
                 to_tui_style(Style::fg(palette.foreground))
             };
-            let text: String = entry.chars().take(inner.width as usize).collect();
+            let text: String = entry.display.chars().take(inner.width as usize).collect();
             Line::from(Span::styled(text, style))
         })
         .collect();
@@ -465,16 +445,21 @@ mod tests {
     }
 
     /// Render one frame and return its rows as plain strings.
+    ///
+    /// Overlay rows are built from an empty in-memory library, which is enough
+    /// for the overlays whose contents do not come from the database.
     fn render(
         state: &mut ReaderState,
         command_bar: &CommandBar,
         width: u16,
         height: u16,
     ) -> Vec<String> {
+        let storage = reader_storage::Storage::open_in_memory().expect("database");
+        let entries = reader_app::visible_entries(state, &storage, 0);
         let mut terminal =
             Terminal::new(TestBackend::new(width, height)).expect("test backend should build");
         terminal
-            .draw(|frame| draw(frame, state, command_bar))
+            .draw(|frame| draw(frame, state, command_bar, &entries))
             .expect("drawing should succeed");
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)

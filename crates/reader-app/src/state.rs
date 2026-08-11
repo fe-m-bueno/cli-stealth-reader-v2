@@ -116,8 +116,17 @@ pub struct ReaderState {
 
     pub overlay: Overlay,
     pub overlay_cursor: usize,
+    /// Incremental search inside the open overlay.
+    pub overlay_search: crate::overlay::OverlaySearch,
     pub status: String,
     pub help_command: Option<String>,
+
+    /// Shortcut categories the reader has folded away, for this session only.
+    pub collapsed_shortcut_categories: std::collections::BTreeSet<reader_core::ShortcutCategory>,
+    /// Which settings tab is open.
+    pub settings_tab: reader_core::SettingsTab,
+    /// Settings as they were when the panel opened, restored if it is cancelled.
+    pub settings_backup: Option<AppSettings>,
 
     pub search: Option<SearchState>,
     pub nav_history: Vec<NavEntry>,
@@ -171,8 +180,12 @@ impl ReaderState {
             focus_block_index: 0,
             overlay: Overlay::None,
             overlay_cursor: 0,
+            overlay_search: crate::overlay::OverlaySearch::default(),
             status: String::new(),
             help_command: None,
+            collapsed_shortcut_categories: std::collections::BTreeSet::new(),
+            settings_tab: reader_core::SettingsTab::Themes,
+            settings_backup: None,
             search: None,
             nav_history: Vec::new(),
             nav_history_cursor: None,
@@ -192,6 +205,16 @@ impl ReaderState {
     /// Re-resolve the theme after a scheme or appearance change.
     pub fn refresh_theme(&mut self) {
         self.theme = self.settings.theme();
+    }
+
+    /// Open an overlay with its cursor at `cursor` and no query.
+    ///
+    /// A stale query would hide most of a freshly opened list, so opening always
+    /// starts from the whole thing.
+    pub fn open_overlay(&mut self, overlay: Overlay, cursor: usize) {
+        self.overlay = overlay;
+        self.overlay_cursor = cursor;
+        self.overlay_search.reset();
     }
 
     /// Drop cached line counts; call after anything that changes rendering.

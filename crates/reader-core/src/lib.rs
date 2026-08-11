@@ -14,6 +14,7 @@ pub mod settings;
 pub mod shortcuts;
 pub mod style;
 pub mod theme;
+pub mod throttle;
 
 pub use book::{
     BlockKind, CanonicalBlock, CanonicalBook, CanonicalChapter, DiagnosticSeverity,
@@ -34,3 +35,4 @@ pub use settings::{
 pub use shortcuts::{KEYBOARD_SHORTCUTS, Shortcut, ShortcutCategory};
 pub use style::{AnsiColor, Color, Span, Style, StyledLine};
 pub use theme::{AppearanceThemeId, ColorSchemeId, Palette, Theme};
+pub use throttle::{POSITION_FLUSH_INTERVAL_MS, WriteThrottle};

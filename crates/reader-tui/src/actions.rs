@@ -4,7 +4,9 @@
 //! every function here takes state, storage, and geometry, and returns nothing
 //! the caller has to interpret.
 
-use reader_app::{CommandContext, Overlay, ReaderState, apply_search_hit, execute_command};
+use reader_app::{
+    CommandContext, Overlay, ReaderState, apply_search_hit, execute_command, visible_entries,
+};
 use reader_core::{CodeLanguage, RenderMode};
 use reader_storage::Storage;
 
@@ -18,6 +20,8 @@ pub fn current_mode(state: &ReaderState, command_bar: &CommandBar) -> InputMode 
         InputMode::Command
     } else if state.overlay == Overlay::None {
         InputMode::Reading
+    } else if state.overlay_search.active {
+        InputMode::OverlaySearch(state.overlay)
     } else {
         InputMode::Overlay(state.overlay)
     }
@@ -94,8 +98,12 @@ pub fn apply(
                 command_bar.buffer.clear();
                 command_bar.cursor = 0;
             } else if state.overlay != Overlay::None {
-                state.overlay = Overlay::None;
-                state.overlay_cursor = 0;
+                // Leaving the settings panel discards its preview.
+                if state.overlay == Overlay::Settings {
+                    reader_app::settings_panel::cancel(state);
+                    state.status = "Settings unchanged.".to_owned();
+                }
+                close_overlay(state);
             } else if state.search.is_some() {
                 state.search = None;
                 state.status = "Search cleared.".to_owned();
@@ -158,7 +166,50 @@ pub fn apply(
         Action::OverlayHome => state.overlay_cursor = 0,
         Action::OverlayEnd => state.overlay_cursor = usize::MAX,
         Action::OverlayConfirm => confirm_overlay(state, storage, context)?,
-        Action::OverlayDelete => delete_overlay_entry(state, storage)?,
+        Action::OverlayDelete => delete_overlay_entry(state, storage, context)?,
+        Action::BeginOverlaySearch => {
+            state.overlay_search.active = true;
+            state.overlay_search.buffer.clear();
+            state.overlay_cursor = 0;
+        }
+        Action::EndOverlaySearch => {
+            // Leaving search clears the query, so the list the reader returns to
+            // is the whole one rather than a filtered remnant.
+            state.overlay_search.reset();
+            state.overlay_cursor = 0;
+        }
+        Action::OverlaySearchChar(character) => {
+            state.overlay_search.buffer.push(character);
+            state.overlay_cursor = 0;
+        }
+        Action::OverlaySearchBackspace => {
+            state.overlay_search.buffer.pop();
+            state.overlay_cursor = 0;
+        }
+        Action::ToggleAllGroups => {
+            if state.collapsed_shortcut_categories.is_empty() {
+                reader_app::shortcuts_panel::collapse_all(state);
+                state.status = "Folded every group.".to_owned();
+            } else {
+                reader_app::shortcuts_panel::expand_all(state);
+                state.status = "Unfolded every group.".to_owned();
+            }
+            state.overlay_cursor = 0;
+        }
+        Action::NextTab | Action::PreviousTab => {
+            if state.overlay == Overlay::Settings {
+                reader_app::settings_panel::cycle_tab(state, action == Action::NextTab);
+                state.overlay_cursor = 0;
+            }
+        }
+        Action::ChangeSetting => {
+            if state.overlay == Overlay::Settings {
+                let cursor = state.overlay_cursor;
+                if let Some(field) = reader_app::settings_panel::change(state, cursor) {
+                    state.status = format!("{}: {}", field.label(), field.value(&state.settings));
+                }
+            }
+        }
         Action::CycleLibrarySort => {
             state.library_sort_key = state.library_sort_key.next();
             state.status = format!("Sorting by {}", state.library_sort_key.label());
@@ -247,7 +298,7 @@ fn advance_search(state: &mut ReaderState, forward: bool, context: CommandContex
 /// Keep the overlay selection and the scroll offset inside their bounds.
 fn clamp_cursors(state: &mut ReaderState, storage: &Storage, context: CommandContext) {
     // A closed or empty overlay has nothing to select.
-    let entries = overlay_entry_count(state, storage);
+    let entries = visible_entries(state, storage, context.now).len();
     state.overlay_cursor = match entries {
         0 => 0,
         count => state.overlay_cursor.min(count - 1),
@@ -255,63 +306,47 @@ fn clamp_cursors(state: &mut ReaderState, storage: &Storage, context: CommandCon
     state.clamp_offset(context.content_width, context.body_height);
 }
 
-/// How many entries the open overlay lists.
-fn overlay_entry_count(state: &ReaderState, storage: &Storage) -> usize {
-    match state.overlay {
-        Overlay::None => 0,
-        Overlay::Chapters => state.chapter_count(),
-        Overlay::Books => storage.books().map_or(0, |books| books.len()),
-        Overlay::Bookmarks => state
-            .book_id()
-            .and_then(|book_id| storage.bookmarks(book_id).ok())
-            .map_or(0, |bookmarks| bookmarks.len()),
-        Overlay::Notes => state
-            .book_id()
-            .and_then(|book_id| storage.notes(book_id).ok())
-            .map_or(0, |notes| notes.len()),
-        Overlay::ColorSchemes => reader_core::ColorSchemeId::ALL.len(),
-        Overlay::Themes => reader_core::theme::AppearanceThemeId::ALL.len(),
-        Overlay::Settings => reader_core::SettingsTab::ALL.len(),
-        Overlay::Keys => reader_core::KEYBOARD_SHORTCUTS.len(),
-        Overlay::Diagnostics if !state.integration_report.is_empty() => {
-            state.integration_report.len()
-        }
-        Overlay::Diagnostics => state
-            .current_book
-            .as_ref()
-            .map_or(0, |book| book.diagnostics.len()),
-        Overlay::FilePicker => state.discoveries.len(),
-        Overlay::Help => {
-            reader_core::command::command_help(state.help_command.as_deref(), None).len()
-        }
-    }
-}
-
 /// Act on the selected overlay entry.
+///
+/// The row is taken from the same filtered list the frame draws, so acting on a
+/// narrowed list cannot hit the item that used to be at that position.
 fn confirm_overlay(
     state: &mut ReaderState,
     storage: &mut Storage,
     context: CommandContext,
 ) -> Result<(), reader_app::ExecutionError> {
-    let cursor = state.overlay_cursor;
+    let Some(entry) = visible_entries(state, storage, context.now)
+        .into_iter()
+        .nth(state.overlay_cursor)
+    else {
+        state.overlay = Overlay::None;
+        return Ok(());
+    };
+
     match state.overlay {
         Overlay::Chapters => {
-            state.overlay = Overlay::None;
-            execute_command(state, storage, &format!("/goto {}", cursor + 1), context)?;
+            let Some(index) = entry.index() else {
+                return Ok(());
+            };
+            close_overlay(state);
+            execute_command(state, storage, &format!("/goto {}", index + 1), context)?;
         }
         Overlay::Books => {
-            if let Some(entry) = storage.books().unwrap_or_default().into_iter().nth(cursor)
-                && let Some(book) = storage.book(&entry.id)?
+            if let Some(id) = entry.id()
+                && let Some(book) = storage.book(id)?
             {
-                state.overlay = Overlay::None;
+                close_overlay(state);
                 reader_app::open_book(state, storage, book, context)?;
             }
         }
         Overlay::Bookmarks => {
             if let Some(book_id) = state.book_id().map(str::to_owned)
-                && let Some(bookmark) = storage.bookmarks(&book_id)?.into_iter().nth(cursor)
+                && let Some(bookmark) = storage
+                    .bookmarks(&book_id)?
+                    .into_iter()
+                    .find(|bookmark| Some(bookmark.id.as_str()) == entry.id())
             {
-                state.overlay = Overlay::None;
+                close_overlay(state);
                 state.push_nav_history();
                 state.chapter_index = bookmark
                     .chapter_index
@@ -327,9 +362,12 @@ fn confirm_overlay(
         }
         Overlay::Notes => {
             if let Some(book_id) = state.book_id().map(str::to_owned)
-                && let Some(note) = storage.notes(&book_id)?.into_iter().nth(cursor)
+                && let Some(note) = storage
+                    .notes(&book_id)?
+                    .into_iter()
+                    .find(|note| Some(note.id.as_str()) == entry.id())
             {
-                state.overlay = Overlay::None;
+                close_overlay(state);
                 state.push_nav_history();
                 if let Some(chapter_index) = note.chapter_index {
                     state.chapter_index =
@@ -342,8 +380,11 @@ fn confirm_overlay(
             }
         }
         Overlay::ColorSchemes => {
-            if let Some(scheme) = reader_core::ColorSchemeId::ALL.get(cursor).copied() {
-                state.overlay = Overlay::None;
+            if let Some(scheme) = entry
+                .index()
+                .and_then(|index| reader_core::ColorSchemeId::ALL.get(index).copied())
+            {
+                close_overlay(state);
                 execute_command(
                     state,
                     storage,
@@ -353,11 +394,12 @@ fn confirm_overlay(
             }
         }
         Overlay::Themes => {
-            if let Some(theme) = reader_core::theme::AppearanceThemeId::ALL
-                .get(cursor)
-                .copied()
-            {
-                state.overlay = Overlay::None;
+            if let Some(theme) = entry.index().and_then(|index| {
+                reader_core::theme::AppearanceThemeId::ALL
+                    .get(index)
+                    .copied()
+            }) {
+                close_overlay(state);
                 execute_command(
                     state,
                     storage,
@@ -367,41 +409,80 @@ fn confirm_overlay(
             }
         }
         Overlay::FilePicker => {
-            if let Some(discovery) = state.discoveries.get(cursor).cloned() {
-                state.overlay = Overlay::None;
+            if let Some(discovery) = entry
+                .index()
+                .and_then(|index| state.discoveries.get(index).cloned())
+            {
+                close_overlay(state);
                 let _ = reader_app::import_and_open(state, storage, &discovery.path, context);
             }
         }
-        // These overlays are informational, so confirming just closes them.
-        Overlay::Settings
-        | Overlay::Keys
-        | Overlay::Diagnostics
-        | Overlay::Help
-        | Overlay::None => {
-            state.overlay = Overlay::None;
+        // Folding a group keeps the panel open; that is the whole interaction.
+        Overlay::Keys => {
+            let rows = reader_app::shortcuts_panel::rows(state);
+            if let Some(row) = entry.index().and_then(|index| rows.get(index).cloned()) {
+                if !reader_app::shortcuts_panel::toggle(state, &row) {
+                    close_overlay(state);
+                }
+            } else {
+                close_overlay(state);
+            }
         }
+        // Space changes a setting and keeps previewing; Enter accepts the whole
+        // page, which is the only point the database hears about it.
+        Overlay::Settings => {
+            let settings = reader_app::settings_panel::save(state);
+            storage
+                .save_settings(&settings)
+                .map_err(reader_app::ExecutionError::Storage)?;
+            close_overlay(state);
+            state.status = "Settings saved.".to_owned();
+        }
+        Overlay::Diagnostics | Overlay::Help | Overlay::None => close_overlay(state),
     }
     Ok(())
+}
+
+/// Close the overlay and forget what was filtering it.
+fn close_overlay(state: &mut ReaderState) {
+    state.overlay = Overlay::None;
+    state.overlay_cursor = 0;
+    state.overlay_search.reset();
 }
 
 fn delete_overlay_entry(
     state: &mut ReaderState,
     storage: &Storage,
+    context: CommandContext,
 ) -> Result<(), reader_app::ExecutionError> {
     let Some(book_id) = state.book_id().map(str::to_owned) else {
         return Ok(());
     };
-    let cursor = state.overlay_cursor;
+    let Some(id) = visible_entries(state, storage, context.now)
+        .into_iter()
+        .nth(state.overlay_cursor)
+        .and_then(|entry| entry.id().map(str::to_owned))
+    else {
+        return Ok(());
+    };
+
+    // Only an entry that belongs to the open book can be deleted from here; the
+    // cursor is checked against storage rather than trusted.
     match state.overlay {
         Overlay::Bookmarks => {
-            if let Some(bookmark) = storage.bookmarks(&book_id)?.into_iter().nth(cursor) {
-                storage.delete_bookmark(&bookmark.id)?;
+            let exists = storage
+                .bookmarks(&book_id)?
+                .iter()
+                .any(|bookmark| bookmark.id == id);
+            if exists {
+                storage.delete_bookmark(&id)?;
                 state.status = "Bookmark deleted.".to_owned();
             }
         }
         Overlay::Notes => {
-            if let Some(note) = storage.notes(&book_id)?.into_iter().nth(cursor) {
-                storage.delete_note(&note.id)?;
+            let exists = storage.notes(&book_id)?.iter().any(|note| note.id == id);
+            if exists {
+                storage.delete_note(&id)?;
                 state.status = "Note deleted.".to_owned();
             }
         }

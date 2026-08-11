@@ -20,6 +20,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use reader_app::{CommandContext, ReaderState, persist_pace};
+use reader_core::WriteThrottle;
 use reader_storage::Storage;
 
 use crate::actions::{apply, current_mode};
@@ -115,7 +116,9 @@ pub fn run(state: &mut ReaderState, storage: &mut Storage) -> Result<(), AppErro
 
     // The pace model is only worth keeping if the session actually read something.
     persist_pace(state, storage, now_millis());
-    save_position(state, storage);
+    if let Some((book_id, position)) = current_position(state) {
+        write_position(storage, &book_id, position);
+    }
 
     let _ = std::panic::take_hook();
     restore_terminal(mouse_captured);
@@ -123,24 +126,27 @@ pub fn run(state: &mut ReaderState, storage: &mut Storage) -> Result<(), AppErro
     result
 }
 
-/// Write the reading position, so the next start resumes here.
-fn save_position(state: &mut ReaderState, storage: &Storage) {
-    let Some(book_id) = state.book_id().map(str::to_owned) else {
-        return;
-    };
+/// The reading position as it currently stands, with progress recomputed.
+fn current_position(state: &mut ReaderState) -> Option<(String, reader_core::ReadingPosition)> {
+    let book_id = state.book_id().map(str::to_owned)?;
     let layout = state.layout(1);
     let chapter_progress = state.chapter_progress(layout.content_width, layout.body_height);
     let book_progress = state.book_progress(layout.content_width, layout.body_height);
-    let _ = storage.save_position(
-        &book_id,
+    Some((
+        book_id,
         reader_core::ReadingPosition {
             chapter_index: state.chapter_index,
             chapter_progress,
             book_progress,
             block_offset: state.block_offset,
         },
-        now_millis(),
-    );
+    ))
+}
+
+/// Write the reading position, so the next start resumes here.
+fn write_position(storage: &Storage, book_id: &str, position: reader_core::ReadingPosition) {
+    // A failed position write costs the reader their place, not their session.
+    let _ = storage.save_position(book_id, position, now_millis());
 }
 
 /// The concrete terminal the reader drives. Tests exercise `draw`, `map_key`,
@@ -185,13 +191,25 @@ fn event_loop(
     mouse_captured: &mut bool,
 ) -> Result<(), AppError> {
     let mut last_timer_refresh: Option<i64> = None;
+    // Scrolling changes the position on every keypress; the throttle keeps the
+    // first and last write of each window so the place survives a crash without
+    // putting the database in the reader's hot loop.
+    let mut position_writes: WriteThrottle<(String, reader_core::ReadingPosition)> =
+        WriteThrottle::default();
 
     while !state.should_quit {
         // The footer shows a running Toggl timer, counted locally from its start
         // so the display stays accurate between the rare background polls.
         refresh_timer_line(state, storage, command_bar, &mut last_timer_refresh);
 
-        terminal.draw(|frame| draw(frame, state, command_bar))?;
+        if let Some((book_id, position)) = position_writes.tick(now_millis()) {
+            write_position(storage, &book_id, position);
+        }
+
+        // The overlay list is built once per frame, from the database, and then
+        // both drawn and indexed by the cursor.
+        let overlay_entries = reader_app::visible_entries(state, storage, now_millis());
+        terminal.draw(|frame| draw(frame, state, command_bar, &overlay_entries))?;
 
         // Mouse capture follows the setting, which a command can change.
         if state.settings.mouse_capture != *mouse_captured {
@@ -232,6 +250,19 @@ fn event_loop(
             }
             _ => {}
         }
+
+        // Offer the new position; the throttle decides whether it lands now.
+        if let Some((book_id, position)) = current_position(state)
+            && let Some((book_id, position)) =
+                position_writes.schedule((book_id, position), context.now)
+        {
+            write_position(storage, &book_id, position);
+        }
+    }
+
+    // Whatever is still held belongs on disk before the reader leaves.
+    if let Some((book_id, position)) = position_writes.flush(now_millis()) {
+        write_position(storage, &book_id, position);
     }
     Ok(())
 }

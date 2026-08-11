@@ -61,6 +61,21 @@ pub enum Action {
     CycleLibrarySort,
     /// Reverse the library sort direction.
     ReverseLibrarySort,
+    /// Start narrowing the overlay by typing.
+    BeginOverlaySearch,
+    /// Stop narrowing, keeping the list as it was before the query.
+    EndOverlaySearch,
+    /// Add a character to the overlay's query.
+    OverlaySearchChar(char),
+    /// Remove the last character of the overlay's query.
+    OverlaySearchBackspace,
+    /// Fold or unfold every group, in overlays that have them.
+    ToggleAllGroups,
+    /// Change the setting under the cursor, previewing it.
+    ChangeSetting,
+    /// Move between tabs, in overlays that have them.
+    NextTab,
+    PreviousTab,
     ToggleFocusMode,
     CycleRenderMode,
     CycleCodeDensity,
@@ -84,6 +99,8 @@ pub enum InputMode {
     Command,
     /// An overlay has the keyboard.
     Overlay(Overlay),
+    /// An overlay has the keyboard and is being narrowed by a query.
+    OverlaySearch(Overlay),
 }
 
 /// How many lines a wheel notch or `j`/`k` scrolls.
@@ -94,7 +111,8 @@ pub const SCROLL_STEP: usize = 1;
 pub fn map_key(key: KeyEvent, mode: InputMode) -> Action {
     match mode {
         InputMode::Command => map_command_key(key),
-        InputMode::Overlay(overlay) => map_overlay_key(key, overlay),
+        InputMode::Overlay(overlay) => map_overlay_key(key, overlay, false),
+        InputMode::OverlaySearch(overlay) => map_overlay_key(key, overlay, true),
         InputMode::Reading => map_reading_key(key),
     }
 }
@@ -118,17 +136,37 @@ fn map_command_key(key: KeyEvent) -> Action {
     }
 }
 
-fn map_overlay_key(key: KeyEvent, overlay: Overlay) -> Action {
+fn map_overlay_key(key: KeyEvent, overlay: Overlay, searching: bool) -> Action {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     if control && matches!(key.code, KeyCode::Char('c')) {
         return Action::Quit;
     }
+
+    // While searching, letters narrow the list instead of navigating it.
+    if searching {
+        return match key.code {
+            KeyCode::Esc => Action::EndOverlaySearch,
+            KeyCode::Enter => Action::OverlayConfirm,
+            KeyCode::Backspace => Action::OverlaySearchBackspace,
+            KeyCode::Up => Action::OverlayUp,
+            KeyCode::Down => Action::OverlayDown,
+            KeyCode::PageUp => Action::OverlayPageUp,
+            KeyCode::PageDown => Action::OverlayPageDown,
+            KeyCode::Char(character) if !control => Action::OverlaySearchChar(character),
+            _ => Action::Ignore,
+        };
+    }
+
     match key.code {
+        KeyCode::Char('/') => Action::BeginOverlaySearch,
         KeyCode::Esc | KeyCode::Char('q') => Action::Dismiss,
         KeyCode::Enter => Action::OverlayConfirm,
         KeyCode::Up | KeyCode::Char('k') => Action::OverlayUp,
         KeyCode::Down | KeyCode::Char('j') => Action::OverlayDown,
         KeyCode::PageUp | KeyCode::Char('b') => Action::OverlayPageUp,
+        // In settings, space changes the value under the cursor; everywhere else
+        // it pages, since there is nothing to change.
+        KeyCode::Char(' ') if overlay == Overlay::Settings => Action::ChangeSetting,
         KeyCode::PageDown | KeyCode::Char(' ') => Action::OverlayPageDown,
         KeyCode::Home | KeyCode::Char('g') => Action::OverlayHome,
         KeyCode::End | KeyCode::Char('G') => Action::OverlayEnd,
@@ -138,7 +176,12 @@ fn map_overlay_key(key: KeyEvent, overlay: Overlay) -> Action {
         }
         KeyCode::Char('s') if overlay == Overlay::Books => Action::CycleLibrarySort,
         KeyCode::Char('r') if overlay == Overlay::Books => Action::ReverseLibrarySort,
-        KeyCode::Char('/') => Action::FocusCommandBar,
+        // Folding only means something where the list has groups.
+        KeyCode::Char('z') if overlay == Overlay::Keys => Action::ToggleAllGroups,
+        KeyCode::Left if overlay == Overlay::Settings => Action::PreviousTab,
+        KeyCode::Right if overlay == Overlay::Settings => Action::NextTab,
+        KeyCode::Char('h') if overlay == Overlay::Settings => Action::PreviousTab,
+        KeyCode::Char('l') if overlay == Overlay::Settings => Action::NextTab,
         _ => Action::Ignore,
     }
 }
@@ -386,6 +429,101 @@ mod tests {
                 InputMode::Overlay(Overlay::Notes)
             ),
             Action::Ignore
+        );
+    }
+
+    #[test]
+    fn slash_starts_a_search_inside_an_overlay() {
+        assert_eq!(
+            map_key(
+                press(KeyCode::Char('/')),
+                InputMode::Overlay(Overlay::Chapters)
+            ),
+            Action::BeginOverlaySearch
+        );
+    }
+
+    #[test]
+    fn while_searching_letters_narrow_the_list_instead_of_navigating() {
+        let mode = InputMode::OverlaySearch(Overlay::Chapters);
+        assert_eq!(
+            map_key(press(KeyCode::Char('j')), mode),
+            Action::OverlaySearchChar('j'),
+            "j is a letter here, not a movement"
+        );
+        assert_eq!(
+            map_key(press(KeyCode::Char('q')), mode),
+            Action::OverlaySearchChar('q'),
+            "and q does not close the overlay"
+        );
+        assert_eq!(
+            map_key(press(KeyCode::Backspace), mode),
+            Action::OverlaySearchBackspace
+        );
+        assert_eq!(map_key(press(KeyCode::Esc), mode), Action::EndOverlaySearch);
+        assert_eq!(map_key(press(KeyCode::Enter), mode), Action::OverlayConfirm);
+    }
+
+    #[test]
+    fn arrows_still_move_the_selection_while_searching() {
+        let mode = InputMode::OverlaySearch(Overlay::Books);
+        assert_eq!(map_key(press(KeyCode::Down), mode), Action::OverlayDown);
+        assert_eq!(map_key(press(KeyCode::Up), mode), Action::OverlayUp);
+        assert_eq!(
+            map_key(press(KeyCode::PageDown), mode),
+            Action::OverlayPageDown
+        );
+    }
+
+    #[test]
+    fn folding_and_tabs_are_bound_only_where_they_exist() {
+        assert_eq!(
+            map_key(press(KeyCode::Char('z')), InputMode::Overlay(Overlay::Keys)),
+            Action::ToggleAllGroups
+        );
+        assert_eq!(
+            map_key(
+                press(KeyCode::Char('z')),
+                InputMode::Overlay(Overlay::Books)
+            ),
+            Action::Ignore,
+            "the library has no groups to fold"
+        );
+
+        for (code, expected) in [
+            (KeyCode::Right, Action::NextTab),
+            (KeyCode::Left, Action::PreviousTab),
+            (KeyCode::Char('l'), Action::NextTab),
+            (KeyCode::Char('h'), Action::PreviousTab),
+        ] {
+            assert_eq!(
+                map_key(press(code), InputMode::Overlay(Overlay::Settings)),
+                expected,
+                "{code:?} in settings"
+            );
+        }
+        assert_eq!(
+            map_key(press(KeyCode::Right), InputMode::Overlay(Overlay::Chapters)),
+            Action::Ignore,
+            "other overlays have no tabs"
+        );
+    }
+
+    #[test]
+    fn space_changes_a_setting_but_pages_everywhere_else() {
+        assert_eq!(
+            map_key(
+                press(KeyCode::Char(' ')),
+                InputMode::Overlay(Overlay::Settings)
+            ),
+            Action::ChangeSetting
+        );
+        assert_eq!(
+            map_key(
+                press(KeyCode::Char(' ')),
+                InputMode::Overlay(Overlay::Chapters)
+            ),
+            Action::OverlayPageDown
         );
     }
 
