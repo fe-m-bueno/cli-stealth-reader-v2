@@ -1,0 +1,17 @@
+[package]
+name = "reader-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+reader-app.workspace = true
+reader-core.workspace = true
+reader-formats.workspace = true
+reader-storage.workspace = true
+
+serde_json.workspace = true

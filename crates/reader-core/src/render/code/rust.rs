@@ -17,13 +17,13 @@ use super::{LineBuilder, Role, block_text, comment_line, render_structural};
 /// `: Vec<String> = ` (16) + `""` (2) + `;` (1), plus slack for escapes.
 const TEXT_OVERHEAD: usize = 44;
 
-type Pattern = fn(&str, &[String], usize, &Palette) -> StyledLine;
+type Pattern = fn(&str, &[&str], usize, &Palette) -> StyledLine;
 
 fn literal(line: &str) -> String {
     format!("\"{}\"", esc(line))
 }
 
-fn pat_let(line: &str, words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pat_let(line: &str, words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Keyword, "let")
@@ -35,7 +35,7 @@ fn pat_let(line: &str, words: &[String], seed: usize, palette: &Palette) -> Styl
     builder.build()
 }
 
-fn pat_let_mut(line: &str, words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pat_let_mut(line: &str, words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     const TYPES: [&str; 5] = ["&str", "String", "&[u8]", "i32", "usize"];
     let mut builder = LineBuilder::new(palette);
     builder
@@ -52,7 +52,7 @@ fn pat_let_mut(line: &str, words: &[String], seed: usize, palette: &Palette) -> 
     builder.build()
 }
 
-fn pat_comment(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_comment(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     comment_line(palette, format!("// {line}"))
 }
 
@@ -66,15 +66,15 @@ fn macro_call(name: &str, line: &str, palette: &Palette) -> StyledLine {
     builder.build()
 }
 
-fn pat_println(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_println(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     macro_call("println!", line, palette)
 }
 
-fn pat_eprintln(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_eprintln(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     macro_call("eprintln!", line, palette)
 }
 
-fn pat_ok(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_ok(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Type, "Ok")
@@ -84,7 +84,7 @@ fn pat_ok(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> Sty
     builder.build()
 }
 
-fn pat_err(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_err(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Type, "Err")
@@ -94,7 +94,7 @@ fn pat_err(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> St
     builder.build()
 }
 
-fn pat_let_discard(line: &str, words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pat_let_discard(line: &str, words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Keyword, "let")
@@ -108,7 +108,7 @@ fn pat_let_discard(line: &str, words: &[String], seed: usize, palette: &Palette)
     builder.build()
 }
 
-fn pat_assert_eq(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_assert_eq(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Function, "assert_eq!")
@@ -118,7 +118,7 @@ fn pat_assert_eq(line: &str, _words: &[String], _seed: usize, palette: &Palette)
     builder.build()
 }
 
-fn pat_format(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_format(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Function, "format!")
@@ -128,7 +128,7 @@ fn pat_format(line: &str, _words: &[String], _seed: usize, palette: &Palette) ->
     builder.build()
 }
 
-fn pat_push(line: &str, words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pat_push(line: &str, words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Ident, to_snake_name(words, seed, ""))
@@ -140,11 +140,11 @@ fn pat_push(line: &str, words: &[String], seed: usize, palette: &Palette) -> Sty
     builder.build()
 }
 
-fn pat_info(line: &str, _words: &[String], _seed: usize, palette: &Palette) -> StyledLine {
+fn pat_info(line: &str, _words: &[&str], _seed: usize, palette: &Palette) -> StyledLine {
     macro_call("info!", line, palette)
 }
 
-fn pat_expect(line: &str, words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pat_expect(line: &str, words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Function, to_snake_func_name(words, seed))
@@ -209,7 +209,7 @@ fn indented_body(
         .collect()
 }
 
-fn fn_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn fn_open(words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Keyword, "fn")
@@ -221,7 +221,7 @@ fn fn_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
     builder.build()
 }
 
-fn pub_fn_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn pub_fn_open(words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     const RETURNS: [&str; 3] = ["String", "Result<(), Box<dyn Error>>", "Option<String>"];
     let mut builder = LineBuilder::new(palette);
     builder
@@ -234,7 +234,7 @@ fn pub_fn_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
     builder.build()
 }
 
-fn impl_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn impl_open(words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Keyword, "impl")
@@ -244,7 +244,7 @@ fn impl_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
     builder.build()
 }
 
-fn match_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
+fn match_open(words: &[&str], seed: usize, palette: &Palette) -> StyledLine {
     let mut builder = LineBuilder::new(palette);
     builder
         .push(Role::Keyword, "match")
@@ -254,7 +254,7 @@ fn match_open(words: &[String], seed: usize, palette: &Palette) -> StyledLine {
     builder.build()
 }
 
-fn struct_lines(words: &[String], seed: usize, palette: &Palette) -> Vec<StyledLine> {
+fn struct_lines(words: &[&str], seed: usize, palette: &Palette) -> Vec<StyledLine> {
     const TYPES: [&str; 4] = ["String", "u32", "bool", "Vec<String>"];
 
     let mut derive = LineBuilder::new(palette);

@@ -96,8 +96,10 @@ impl<'a> LineBuilder<'a> {
         self.push(Role::Raw, " ")
     }
 
-    pub(crate) fn build(&self) -> StyledLine {
-        self.line.clone()
+    /// Take the finished line. Consuming the builder avoids cloning every span
+    /// on a path that runs once per rendered line.
+    pub(crate) fn build(&mut self) -> StyledLine {
+        std::mem::take(&mut self.line)
     }
 }
 

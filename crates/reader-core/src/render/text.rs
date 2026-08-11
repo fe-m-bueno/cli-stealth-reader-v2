@@ -48,23 +48,34 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
 ///
 /// v1 used `\w`, so anything outside `[A-Za-z0-9_]` becomes a separator — an
 /// accented word is split rather than kept.
+///
+/// The result borrows from `text`. This runs once per rendered line in code
+/// mode, so it does not allocate a string per word.
 #[must_use]
-pub fn extract_words(text: &str) -> Vec<String> {
-    text.chars()
-        .map(|char| {
-            if char.is_ascii_alphanumeric() || char == '_' || char.is_whitespace() {
-                char
-            } else {
-                ' '
-            }
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .filter(|word| {
-            word.chars().count() > 2 && word.starts_with(|c: char| c.is_ascii_alphabetic())
-        })
-        .map(str::to_owned)
-        .collect()
+pub fn extract_words(text: &str) -> Vec<&str> {
+    let is_word_byte = |char: char| char.is_ascii_alphanumeric() || char == '_';
+    let mut words = Vec::new();
+    let mut start: Option<usize> = None;
+
+    for (index, char) in text.char_indices() {
+        if is_word_byte(char) {
+            start.get_or_insert(index);
+            continue;
+        }
+        if let Some(begin) = start.take() {
+            push_word(&mut words, &text[begin..index]);
+        }
+    }
+    if let Some(begin) = start {
+        push_word(&mut words, &text[begin..]);
+    }
+    words
+}
+
+fn push_word<'a>(words: &mut Vec<&'a str>, word: &'a str) {
+    if word.chars().count() > 2 && word.starts_with(|char: char| char.is_ascii_alphabetic()) {
+        words.push(word);
+    }
 }
 
 /// Deterministic per-line seed. Same block and line always disguise the same way.
@@ -94,11 +105,11 @@ fn truncate(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
 
-fn pick<'a>(words: &'a [String], fallbacks: &[&'a str], seed: usize) -> &'a str {
+fn pick<'a>(words: &[&'a str], fallbacks: &[&'a str], seed: usize) -> &'a str {
     if words.is_empty() {
         fallbacks[seed % fallbacks.len()]
     } else {
-        words[seed % words.len()].as_str()
+        words[seed % words.len()]
     }
 }
 
@@ -131,14 +142,14 @@ fn upper_first_lower_rest(word: &str) -> String {
 
 /// `camelCase` identifier stem, at most [`MAX_NAME`] characters.
 #[must_use]
-pub fn to_var_name(words: &[String], seed: usize, suffix: &str) -> String {
+pub fn to_var_name(words: &[&str], seed: usize, suffix: &str) -> String {
     let word = pick(words, &VAR_FALLBACKS, seed);
     truncate(&format!("{}{suffix}", lower_first(word)), MAX_NAME)
 }
 
 /// `PascalCase` type name, at most [`MAX_NAME`] characters.
 #[must_use]
-pub fn to_type_name(words: &[String], seed: usize, suffix: &str) -> String {
+pub fn to_type_name(words: &[&str], seed: usize, suffix: &str) -> String {
     let word = pick(words, &TYPE_FALLBACKS, seed);
     truncate(
         &format!("{}{suffix}", upper_first_lower_rest(word)),
@@ -148,22 +159,22 @@ pub fn to_type_name(words: &[String], seed: usize, suffix: &str) -> String {
 
 /// `prefixNoun` function name, at most `MAX_NAME + 4` characters.
 #[must_use]
-pub fn to_func_name(words: &[String], seed: usize) -> String {
+pub fn to_func_name(words: &[&str], seed: usize) -> String {
     let prefix = FUNC_PREFIXES[seed % FUNC_PREFIXES.len()];
     let word = if words.is_empty() {
-        "Content".to_owned()
+        "Content"
     } else {
-        words[(seed + 1) % words.len()].clone()
+        words[(seed + 1) % words.len()]
     };
     truncate(
-        &format!("{prefix}{}", upper_first_lower_rest(&word)),
+        &format!("{prefix}{}", upper_first_lower_rest(word)),
         MAX_NAME + 4,
     )
 }
 
 /// `snake_case` identifier, at most `MAX_NAME + 3` characters.
 #[must_use]
-pub fn to_snake_name(words: &[String], seed: usize, suffix: &str) -> String {
+pub fn to_snake_name(words: &[&str], seed: usize, suffix: &str) -> String {
     let word = pick(words, &VAR_FALLBACKS, seed);
     let mut base = word.to_lowercase();
     if !suffix.is_empty() {
@@ -175,12 +186,12 @@ pub fn to_snake_name(words: &[String], seed: usize, suffix: &str) -> String {
 
 /// `prefix_noun` function name, at most `MAX_NAME + 5` characters.
 #[must_use]
-pub fn to_snake_func_name(words: &[String], seed: usize) -> String {
+pub fn to_snake_func_name(words: &[&str], seed: usize) -> String {
     let prefix = FUNC_PREFIXES[seed % FUNC_PREFIXES.len()];
     let word = if words.is_empty() {
-        "content".to_owned()
+        "content"
     } else {
-        words[(seed + 1) % words.len()].clone()
+        words[(seed + 1) % words.len()]
     };
     truncate(&format!("{prefix}_{}", word.to_lowercase()), MAX_NAME + 5)
 }
@@ -192,8 +203,8 @@ mod tests {
         to_type_name, to_var_name, wrap_text,
     };
 
-    fn words(list: &[&str]) -> Vec<String> {
-        list.iter().map(|word| (*word).to_owned()).collect()
+    fn words<'a>(list: &[&'a str]) -> Vec<&'a str> {
+        list.to_vec()
     }
 
     #[test]

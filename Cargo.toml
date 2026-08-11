@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/reader-app",
+  "crates/reader-bench",
   "crates/reader-core",
   "crates/reader-formats",
   "crates/reader-storage",

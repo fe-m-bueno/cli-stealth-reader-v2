@@ -1622,6 +1622,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "reader-bench"
+version = "0.1.0"
+dependencies = [
+ "reader-app",
+ "reader-core",
+ "reader-formats",
+ "reader-storage",
+ "serde_json",
+]
+
+[[package]]
 name = "reader-core"
 version = "0.1.0"
 dependencies = [

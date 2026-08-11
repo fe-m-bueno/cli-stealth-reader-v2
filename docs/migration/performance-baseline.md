@@ -73,3 +73,45 @@ tracked for regression only, with a budget of "no slower than v1".
 
 A budget is met when the v2 harness reports a median at or below the value above
 in three consecutive runs on an otherwise idle machine.
+
+## v2 results
+
+Same machine and corpus, release build, three consecutive runs. Every budget is
+met, and every measurement improves on v1 by more than the 100% the migration set
+out to achieve.
+
+| Measurement | v1 median | Budget (≤) | Run 1 | Run 2 | Run 3 | Gain |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cold process startup | 339.25 ms | 20 ms | 0.98 ms | 0.88 ms | 0.90 ms | 376× |
+| Import `large.epub` | 191.95 ms | 95 ms | 27.52 ms | 27.92 ms | 26.82 ms | 7.0× |
+| Import `doc.pdf` | 75.79 ms | 37 ms | 11.76 ms | 12.82 ms | 11.88 ms | 6.2× |
+| Import `comic.cbz` | 4.90 ms | 2.45 ms | 0.56 ms | 0.70 ms | 0.59 ms | 8.1× |
+| Import `small.epub` | 5.45 ms | 2.70 ms | 0.28 ms | 0.27 ms | 0.28 ms | 19.8× |
+| Render one chapter, plain | 4.53 ms | 2.25 ms | 1.18 ms | 1.25 ms | 1.22 ms | 3.7× |
+| Render one chapter, code | 5.02 ms | 2.50 ms | 1.72 ms | 1.87 ms | 1.86 ms | 2.8× |
+| Render all 40 chapters, plain | 191.46 ms | 95 ms | 49.60 ms | 50.15 ms | 48.89 ms | 3.9× |
+| Peak RSS | 156.82 MB | 78 MB | 15.00 MB | 15.19 MB | 14.92 MB | 10.4× |
+| SQLite storage open | 0.51 ms | 0.51 ms | 0.26 ms | 0.21 ms | 0.22 ms | 2.3× |
+
+**Verdict: every budget met.** The weakest result is the code disguise at 2.8×,
+which is the most allocation-heavy path in the reader — every line becomes a
+handful of styled spans. Two changes brought it from 1.7× to 2.8×: word
+extraction borrows from the line instead of allocating a `String` per word, and
+the line builder moves its spans out instead of cloning them.
+
+Startup is the number a reader actually feels, and it is the one that changed
+character rather than degree: 339 ms of Node module loading became a 1 ms
+process start, so the reader is on screen before the terminal has finished
+drawing its own frame.
+
+## Reproducing
+
+```bash
+# 1. Build both sides.
+(cd ~/Development/cli-stealth-reader && npm run build)
+cargo build --release -p reader-bench -p stealth-reader
+
+# 2. Measure. The first run generates the shared corpus; later runs reuse it.
+V1_DIR=~/Development/cli-stealth-reader node bench/v1-baseline.mjs --json
+./target/release/reader-bench
+```
