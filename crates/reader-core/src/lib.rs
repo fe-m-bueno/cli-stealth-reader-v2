@@ -3,10 +3,11 @@
 //! This crate deliberately has no terminal, database, archive, PDF, or HTTP
 //! dependencies. Adapters convert external data into these types.
 
-mod book;
+pub mod book;
 pub mod fuzzy;
 pub mod locale;
 pub mod pace;
+pub mod render;
 pub mod settings;
 pub mod shortcuts;
 pub mod style;
@@ -18,6 +19,7 @@ pub use book::{
 };
 pub use locale::{compare_text, format_relative_time};
 pub use pace::{ChapterWords, PaceSample, PaceState};
+pub use render::{RenderOptions, render_block, render_blocks};
 pub use settings::{
     AppSettings, CodeDensity, CodeLanguage, LineSpacing, ProgressVisibility, RenderMode,
     SettingsTab,
