@@ -36,6 +36,10 @@ pub enum Action {
     SubmitCommand,
     /// Complete the current command line.
     CompleteCommand,
+    /// Highlight the suggestion above the current one.
+    CommandPrevious,
+    /// Highlight the suggestion below the current one.
+    CommandNext,
     /// Insert a character into the command line.
     InsertChar(char),
     /// Delete the character before the cursor.
@@ -134,6 +138,9 @@ fn map_command_key(key: KeyEvent) -> Action {
         KeyCode::Esc => Action::Dismiss,
         KeyCode::Enter => Action::SubmitCommand,
         KeyCode::Tab => Action::CompleteCommand,
+        KeyCode::Up => Action::CommandPrevious,
+        KeyCode::Down => Action::CommandNext,
+        KeyCode::BackTab => Action::CommandPrevious,
         KeyCode::Backspace => Action::DeleteBackward,
         KeyCode::Delete => Action::DeleteForward,
         KeyCode::Left => Action::MoveCursorLeft,

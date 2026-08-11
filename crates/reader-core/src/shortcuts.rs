@@ -72,7 +72,7 @@ const fn shortcut(
 use ShortcutCategory::{Commands, Essentials, Navigation, View};
 
 /// The catalogue, in the order the overlay lists it.
-pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
+pub const KEYBOARD_SHORTCUTS: [Shortcut; 30] = [
     shortcut(Navigation, "j / ↑", "Scroll up"),
     shortcut(Navigation, "k / ↓", "Scroll down"),
     shortcut(
@@ -129,6 +129,7 @@ pub const KEYBOARD_SHORTCUTS: [Shortcut; 29] = [
         "Cycle progress display (time left / % bars / hidden)",
     ),
     shortcut(View, "Tab", "Autocomplete or cycle command suggestions"),
+    shortcut(View, "↑/↓", "Move through the command palette"),
     shortcut(Essentials, "q", "Quit the reader"),
 ];
 
@@ -163,7 +164,7 @@ mod tests {
 
     #[test]
     fn every_shortcut_is_documented_and_categorized() {
-        assert_eq!(KEYBOARD_SHORTCUTS.len(), 29);
+        assert_eq!(KEYBOARD_SHORTCUTS.len(), 30);
         for entry in KEYBOARD_SHORTCUTS {
             assert!(!entry.key.is_empty());
             assert!(!entry.description.is_empty());

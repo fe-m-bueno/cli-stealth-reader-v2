@@ -11,6 +11,7 @@ pub mod chrome;
 pub mod frame;
 pub mod input;
 pub mod modals;
+pub mod palette;
 pub mod pointer;
 pub mod settings_page;
 pub mod style;

@@ -582,7 +582,7 @@ fn a_typed_command_runs_and_reports_in_the_footer() {
 }
 
 #[test]
-fn the_command_bar_shows_what_is_being_typed() {
+fn the_command_bar_shows_what_is_being_typed_and_what_it_could_be() {
     let mut session = Session::start("command-bar");
 
     session.press(KeyCode::Char('/'));
@@ -592,16 +592,19 @@ fn the_command_bar_shows_what_is_being_typed() {
 
     let rows = session.rows();
     assert!(
-        rows[rows.len() - 2].starts_with("/goto"),
-        "the command row should echo the line: {:?}",
-        rows[rows.len() - 2]
+        rows.iter().any(|row| row.contains("/goto")),
+        "the palette should echo the line: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Jump by book %")),
+        "and list what the command would do: {rows:?}"
     );
 
     session.press(KeyCode::Esc);
     let dismissed = session.rows();
     assert!(
-        !dismissed[dismissed.len() - 2].starts_with("/goto"),
-        "escape should close the bar"
+        !dismissed.iter().any(|row| row.contains("/goto")),
+        "escape should close the bar: {dismissed:?}"
     );
 }
 
