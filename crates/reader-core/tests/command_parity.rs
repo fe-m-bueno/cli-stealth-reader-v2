@@ -140,7 +140,10 @@ fn check_suggest(
             suggestions.len(),
             expected.len(),
             expected.iter().map(|item| &item.usage).collect::<Vec<_>>(),
-            suggestions.iter().map(|item| &item.usage).collect::<Vec<_>>()
+            suggestions
+                .iter()
+                .map(|item| &item.usage)
+                .collect::<Vec<_>>()
         ));
         return;
     }

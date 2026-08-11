@@ -1,0 +1,27 @@
+[package]
+name = "reader-formats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reader-core.workspace = true
+
+zip.workspace = true
+quick-xml.workspace = true
+html5ever.workspace = true
+markup5ever_rcdom.workspace = true
+pdf-extract.workspace = true
+lopdf.workspace = true
+sha2.workspace = true
+sha1.workspace = true
+md-5.workspace = true
+unicode-general-category.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true

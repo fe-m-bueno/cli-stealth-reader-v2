@@ -41,6 +41,41 @@ pub enum CanonicalBlock {
 }
 
 impl CanonicalBlock {
+    /// Stable identifier, unique within its chapter.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Heading { id, .. }
+            | Self::Paragraph { id, .. }
+            | Self::Blockquote { id, .. }
+            | Self::ListItem { id, .. }
+            | Self::SceneBreak { id, .. }
+            | Self::Image { id, .. }
+            | Self::Anchor { id, .. } => id,
+        }
+    }
+
+    /// The reading text. Anchors carry none, and images carry their description.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Heading { text, .. }
+            | Self::Paragraph { text, .. }
+            | Self::Blockquote { text, .. }
+            | Self::ListItem { text, .. }
+            | Self::SceneBreak { text, .. }
+            | Self::Image { text, .. }
+            | Self::Anchor { text, .. } => text,
+        }
+    }
+
+    /// Words in this block, counted the way v1 counted them: whitespace-split,
+    /// empty pieces dropped.
+    #[must_use]
+    pub fn word_count(&self) -> usize {
+        self.text().split_whitespace().count()
+    }
+
     #[must_use]
     pub const fn kind(&self) -> BlockKind {
         match self {
