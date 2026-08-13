@@ -1,24 +1,24 @@
-# Navegação: Busca (/search)
+# Navigation: Search (/search)
 
-## Objetivo
+## Goal
 
-Buscar um termo de texto dentro do capítulo atual ou do livro inteiro, com navegação entre resultados.
+Search for a text term within the current chapter or the whole book, with navigation between results.
 
-## Contexto
+## Context
 
-`src/commands.ts` — sistema de slash commands.
-`src/executor.ts` — execução de comandos.
+`src/commands.ts` — the slash command system.
+`src/executor.ts` — command execution.
 `src/types.ts` — `AppState`.
-`src/tui.ts` — rendering e overlay.
+`src/tui.ts` — rendering and overlays.
 
 ## Design
 
-### Comando
+### Command
 
-`/search <termo>` — busca no capítulo atual.
-`/search -g <termo>` (ou `/search --global`) — busca em todos os capítulos.
+`/search <term>` — searches the current chapter.
+`/search -g <term>` (or `/search --global`) — searches every chapter.
 
-### Estado
+### State
 
 ```ts
 // types.ts
@@ -26,44 +26,43 @@ export interface SearchState {
   query: string;
   global: boolean;
   results: Array<{ chapterIndex: number; blockIndex: number; lineIndex: number }>;
-  cursor: number; // resultado atual
+  cursor: number; // current result
 }
 // AppState: searchState: SearchState | null
 ```
 
-### Fluxo
+### Flow
 
-1. `/search termo` → varrer `chapter.blocks[].text` com `text.toLowerCase().includes(query)`.
-2. Cada match → registrar `{ chapterIndex, blockIndex }`.
-3. Navegar para o primeiro resultado: setar `state.chapterIndex` e `state.blockOffset` para o bloco correspondente.
-4. Teclas `n` / `N` → próximo/anterior resultado (quando `searchState !== null`).
-5. `Esc` ou novo `/search` limpa o estado de busca.
+1. `/search term` → scan `chapter.blocks[].text` with `text.toLowerCase().includes(query)`.
+2. Each match → record `{ chapterIndex, blockIndex }`.
+3. Navigate to the first result: set `state.chapterIndex` and `state.blockOffset` to the matching block.
+4. The `n` / `N` keys → next/previous result (when `searchState !== null`).
+5. `Esc` or a new `/search` clears the search state.
 
 ### Highlight
 
-Em `renderPlain` e `renderCode`, quando `searchState` ativo, envolver ocorrências do termo com `bg(theme.warning, match)`.
+In `renderPlain` and `renderCode`, when `searchState` is active, wrap occurrences of the term with `bg(theme.warning, match)`.
 
-### Status bar
+### Status Bar
 
-Exibir `[3/12] "termo"` na status bar durante busca ativa.
+Show `[3/12] "term"` in the status bar while a search is active.
 
-### Overlay (opcional)
+### Overlay (optional)
 
-Para buscas globais com muitos resultados, mostrar overlay tipo chapters com lista `Chapter X: match preview`.
+For global searches with many results, show a chapters-style overlay listing `Chapter X: match preview`.
 
-## Arquivos a modificar
+## Files to Modify
 
-- `src/types.ts`: `SearchState`, campo em `AppState`
-- `src/commands.ts`: definição de `/search`
-- `src/executor.ts`: implementação da busca
-- `src/renderers.ts`: highlight de match
-- `src/input.ts`: teclas `n` / `N`
-- `src/tui.ts`: exibir estado de busca na status bar
+- `src/types.ts`: `SearchState`, field on `AppState`
+- `src/commands.ts`: definition of `/search`
+- `src/executor.ts`: search implementation
+- `src/renderers.ts`: match highlighting
+- `src/input.ts`: the `n` / `N` keys
+- `src/tui.ts`: show the search state in the status bar
 
-## Critérios de aceitação
+## Acceptance Criteria
 
-- Busca case-insensitive.
-- `n`/`N` cicla circularmente.
-- Busca global atravessa capítulos.
-- Highlight visível em ambos os modos (plain e code).
-
+- The search is case-insensitive.
+- `n`/`N` cycle circularly.
+- Global search crosses chapters.
+- The highlight is visible in both modes (plain and code).

@@ -1,61 +1,61 @@
-# Leitura: Highlight de Diálogos e Citações
+# Reading: Dialogue and Quote Highlighting
 
-## Objetivo
+## Goal
 
-No modo plain, detectar diálogos (texto entre aspas ou travessão) e citações (blockquotes e inline quotes) e renderizá-los com cor diferente para facilitar a leitura.
+In plain mode, detect dialogue (text in quotation marks or after an em dash) and quotes (blockquotes and inline quotes) and render them in a different color to make reading easier.
 
-## Contexto
+## Context
 
 `src/renderers.ts` — `renderPlain`.
-`src/types.ts` — `ThemePreset` (campos de cor disponíveis).
+`src/types.ts` — `ThemePreset` (the available color fields).
 
 ## Design
 
-### Detecção de diálogo
+### Dialogue Detection
 
-Padrões a detectar no texto do bloco:
+Patterns to detect in a block's text:
 
-- `"texto entre aspas duplas"` (inglês)
-- `"texto entre aspas curvas" / 'texto'`
-- `— texto até fim de linha ou próxima pontuação` (travessão narrativo)
-- `«texto»` (francês/russo)
+- `"text in double quotes"` (English)
+- `"text in curly quotes" / 'text'`
+- `— text up to the end of the line or the next punctuation mark` (narrative em dash)
+- `«text»` (French/Russian)
 
-### Implementação
+### Implementation
 
-Criar função `renderWithDialogueHighlight(line: string, theme: ThemePreset): string` que:
+Create a `renderWithDialogueHighlight(line: string, theme: ThemePreset): string` function that:
 
-1. Usa regex para encontrar spans de diálogo/citação.
-2. Aplica `fg(theme.accent, dialoguePart)` ou uma nova cor `theme.dialogue` (se adicionada) nos trechos de diálogo.
-3. Mantém o restante da linha com `fg(theme.foreground, narrativePart)`.
+1. Uses a regex to find dialogue/quote spans.
+2. Applies `fg(theme.accent, dialoguePart)` — or a new `theme.dialogue` color, if added — to the dialogue segments.
+3. Keeps the rest of the line as `fg(theme.foreground, narrativePart)`.
 
-### Cores a usar (sem adicionar campo novo ao tema)
+### Colors to Use (without adding a new theme field)
 
-- Diálogo: `theme.accent` (já existe) — cria contraste claro com narrativa.
-- Pensamento (itálico seria ideal, mas terminal suporta `\x1b[3m`): `fg(theme.accentMuted, ...)`.
+- Dialogue: `theme.accent` (already exists) — creates clear contrast with the narrative.
+- Thought (italics would be ideal, and the terminal does support `\x1b[3m`): `fg(theme.accentMuted, ...)`.
 
 ### Blockquotes
 
-Já renderizados com `theme.subtle` — manter, mas adicionar ícone diferente: `❝` ou `"` no início.
+Already rendered with `theme.subtle` — keep that, but add a different icon: `❝` or `"` at the start.
 
-### Ativação
+### Activation
 
-Sempre ativo no modo plain. Não afeta modo code.
-Possível flag: `/highlight off` para desabilitar se o usuário preferir texto uniforme.
+Always on in plain mode. Does not affect code mode.
+Possible flag: `/highlight off` to disable it for users who prefer uniform text.
 
-### Casos limítrofes
+### Edge Cases
 
-- Aspas dentro de diálogo (escaped): não abrir novo span.
-- Linha que começa com `—` mas não é diálogo (listas, enumerações): heurística — só aplicar se `—` é o primeiro caractere não-espaço da linha.
+- Quotes inside dialogue (escaped): do not open a new span.
+- A line starting with `—` that is not dialogue (lists, enumerations): heuristic — apply only if `—` is the first non-space character on the line.
 
-## Arquivos a modificar
+## Files to Modify
 
-- `src/renderers.ts`: nova função `renderWithDialogueHighlight`, chamar dentro de `renderPlain`
-- `src/types.ts` (opcional): adicionar `dialogue?: string` ao `ThemePreset` com fallback para `accent`
-- `src/themes.ts` (opcional): adicionar valor `dialogue` nos 4 temas
+- `src/renderers.ts`: new `renderWithDialogueHighlight` function, called from `renderPlain`
+- `src/types.ts` (optional): add `dialogue?: string` to `ThemePreset` with a fallback to `accent`
+- `src/themes.ts` (optional): add a `dialogue` value to the 4 themes
 
-## Critérios de aceitação
+## Acceptance Criteria
 
-- Diálogos entre aspas duplas detectados corretamente em português e inglês.
-- Travessão narrativo detectado no início de parágrafo.
-- Não quebra blockquotes já estilizados.
-- Não aplica highlight em modo code.
+- Dialogue in double quotes is detected correctly in both Portuguese and English.
+- The narrative em dash is detected at the start of a paragraph.
+- Already-styled blockquotes are not broken.
+- No highlighting is applied in code mode.

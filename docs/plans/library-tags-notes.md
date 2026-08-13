@@ -1,16 +1,16 @@
-# Biblioteca: Tags e Anotações (/tag, /note)
+# Library: Tags and Notes (/tag, /note)
 
-## Objetivo
-Permitir categorizar livros com tags e adicionar notas livres por livro ou por posição.
+## Goal
+Allow books to be categorized with tags and free-form notes to be added per book or per position.
 
-## Contexto
+## Context
 `src/storage.ts` — SQLite.
 `src/commands.ts`, `src/executor.ts`.
-`src/tui.ts` — overlay de books.
+`src/tui.ts` — the books overlay.
 
 ## Design
 
-### Tabelas SQLite
+### SQLite Tables
 
 ```sql
 CREATE TABLE IF NOT EXISTS book_tags (
@@ -22,49 +22,49 @@ CREATE TABLE IF NOT EXISTS book_tags (
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   book_id TEXT NOT NULL,
-  chapter_index INTEGER,  -- null = nota do livro inteiro
+  chapter_index INTEGER,  -- null = note for the whole book
   block_offset INTEGER,
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 ```
 
-### Comandos de tags
-- `/tag <tag>` — adiciona tag ao livro atual (ex: `/tag ficção`, `/tag lendo`)
-- `/tag -d <tag>` — remove tag
-- `/tags` — lista tags do livro atual
+### Tag Commands
+- `/tag <tag>` — adds a tag to the current book (for example, `/tag fiction`, `/tag reading`)
+- `/tag -d <tag>` — removes a tag
+- `/tags` — lists the current book's tags
 
-### Comandos de notas
-- `/note <texto>` — adiciona nota na posição atual (chapterIndex + blockOffset)
-- `/note -l` — lista notas do livro atual em overlay
-- `/note -d <id>` — deleta nota
+### Note Commands
+- `/note <text>` — adds a note at the current position (chapterIndex + blockOffset)
+- `/note -l` — lists the current book's notes in an overlay
+- `/note -d <id>` — deletes a note
 
-### Overlay de notas
-`state.overlay = "notes"` — lista:
+### Notes Overlay
+`state.overlay = "notes"` — the list:
 ```
-> Ch.3 §42  "Passagem muito boa sobre..."   [há 3 dias]
-  Ch.1 §0   "Contexto histórico relevante"  [há 1 semana]
+> Ch.3 §42  "Really good passage about..."   [3 days ago]
+  Ch.1 §0   "Relevant historical context"    [1 week ago]
 ```
-Enter → navega para a posição da nota.
+Enter → navigates to the note's position.
 
-### Filtro na biblioteca por tag
-No overlay de `books`, adicionar linha de filtro: `/books ficção` → filtra por tag.
-Ou tecla `f` dentro do overlay de books para entrar em modo filtro.
+### Filtering the Library by Tag
+In the `books` overlay, add a filter line: `/books fiction` → filters by tag.
+Or the `f` key inside the books overlay to enter filter mode.
 
-### Exibição no overlay de books
-Adicionar tags ao lado do título:
+### Display in the Books Overlay
+Add tags next to the title:
 ```
-> Dom Casmurro — Machado de Assis  [Ch.3 · 42%]  #clássico #lendo
+> Dom Casmurro — Machado de Assis  [Ch.3 · 42%]  #classic #reading
 ```
 
-## Arquivos a modificar
-- `src/storage.ts`: novas tabelas, métodos `addTag`, `removeTag`, `listTags`, `addNote`, `listNotes`, `deleteNote`
-- `src/types.ts`: `Note`, `OverlayKind` += `"notes"`, campos em `AppState`
+## Files to Modify
+- `src/storage.ts`: new tables and `addTag`, `removeTag`, `listTags`, `addNote`, `listNotes`, `deleteNote` methods
+- `src/types.ts`: `Note`, `OverlayKind` += `"notes"`, fields on `AppState`
 - `src/commands.ts`: `/tag`, `/tags`, `/note`
-- `src/executor.ts`: implementação
-- `src/tui.ts`: overlay de notes, exibir tags no overlay de books
+- `src/executor.ts`: implementation
+- `src/tui.ts`: notes overlay, display tags in the books overlay
 
-## Critérios de aceitação
-- Tags e notas persistem entre sessões.
-- Navegar para nota restaura posição exata.
-- `/tag` sem arg exibe lista de tags do livro atual.
+## Acceptance Criteria
+- Tags and notes persist across sessions.
+- Navigating to a note restores the exact position.
+- `/tag` with no argument shows the current book's tag list.

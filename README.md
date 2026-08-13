@@ -1,58 +1,58 @@
 # stealth-reader
 
-Leitor de livros em tela cheia para o terminal, escrito em Rust. O
-`stealth-reader` abre EPUB, CBZ e PDF e oferece dois estilos de leitura:
+A full-screen book reader for the terminal, written in Rust. `stealth-reader`
+opens EPUB, CBZ, and PDF files and offers two reading styles:
 
-- **Plain**: prosa limpa, com títulos, citações, listas e quebras de cena
-  formatados para leitura;
-- **Stealth**: o mesmo conteúdo disfarçado como código plausível de TypeScript,
-  Python ou Rust.
+- **Plain**: clean prose, with headings, quotes, lists, and scene breaks
+  formatted for reading;
+- **Stealth**: the same content disguised as plausible TypeScript, Python, or
+  Rust code.
 
-Esta é a implementação nativa que substitui o projeto anterior, aqui chamado
-de [`stealth-reader-v0`](https://github.com/fe-m-bueno/cli-stealth-reader).
-Ela mantém o formato do banco de dados do v0: posições, bookmarks, notas, tags
-e configurações continuam disponíveis sem uma migração manual.
+This is the native implementation that replaces the earlier project, referred to
+here as [`stealth-reader-v0`](https://github.com/fe-m-bueno/cli-stealth-reader).
+It keeps the v0 database format: positions, bookmarks, notes, tags, and settings
+remain available without a manual migration.
 
-![Modo stealth em TypeScript](docs/screenshots/stealth-code-mode.png)
+![Stealth mode in TypeScript](docs/screenshots/stealth-code-mode.png)
 
-## Recursos
+## Features
 
-- leitura em TUI de tela cheia, com Ratatui e suporte a mouse;
-- importação de EPUB3, com fallback para NCX e ordem do spine;
-- suporte a CBZ e PDF, incluindo diagnósticos para páginas sem texto;
-- descoberta recursiva de `.epub`, `.cbz` e `.pdf`;
-- modo plain com destaque opcional de diálogos;
-- modos stealth de TypeScript, Python e Rust;
-- densidade do código stealth configurável de 1 a 5;
-- modo foco, que centraliza um único bloco de leitura;
-- busca no capítulo atual ou no livro inteiro;
-- navegação por capítulos, histórico, tabela de conteúdos e progresso;
-- bookmarks, notas e tags por livro;
-- biblioteca SQLite persistente, com ordenação por título, autor, progresso ou
-  última abertura;
-- exportação e importação do estado de leitura em JSON;
-- cinco color schemes e seis variantes de aparência;
-- ritmo de leitura aprendido e estimativa de tempo restante;
-- integração opcional com Toggl Track Focus;
-- manual de comandos e atalhos disponível dentro do próprio leitor.
+- full-screen TUI reading, with Ratatui and mouse support;
+- EPUB3 import, with fallbacks to NCX and spine order;
+- CBZ and PDF support, including diagnostics for pages without text;
+- recursive discovery of `.epub`, `.cbz`, and `.pdf` files;
+- plain mode with optional dialogue highlighting;
+- TypeScript, Python, and Rust stealth modes;
+- stealth code density configurable from 1 to 5;
+- focus mode, which centers a single reading block;
+- search within the current chapter or the whole book;
+- chapter navigation, history, table of contents, and progress;
+- bookmarks, notes, and tags per book;
+- a persistent SQLite library, sortable by title, author, progress, or last
+  opened;
+- reading state export and import as JSON;
+- five color schemes and six appearance variants;
+- a learned reading pace and time-remaining estimate;
+- optional Toggl Track Focus integration;
+- a command and shortcut manual available inside the reader itself.
 
-## Instalação
+## Installation
 
-### Requisitos
+### Requirements
 
-- Linux ou macOS;
-- [Rust](https://www.rust-lang.org/tools/install) 1.85 ou mais recente;
-- `rustup` é recomendado. O repositório fixa a toolchain `1.97.1` em
-  [`rust-toolchain.toml`](rust-toolchain.toml), que o `rustup` instala e usa
-  automaticamente;
-- terminal interativo com suporte a Unicode e cores ANSI. Os temas em RGB
-  funcionam melhor em terminais com suporte a 24-bit color.
+- Linux or macOS;
+- [Rust](https://www.rust-lang.org/tools/install) 1.85 or later;
+- `rustup` is recommended. The repository pins the `1.97.1` toolchain in
+  [`rust-toolchain.toml`](rust-toolchain.toml), which `rustup` installs and uses
+  automatically;
+- an interactive terminal with Unicode and ANSI color support. The RGB themes
+  work best in terminals with 24-bit color support.
 
-O uso normal não requer Node.js. Node.js 20+ só é necessário para regenerar
-fixtures de paridade ou executar os benchmarks que comparam com o
+Normal use does not require Node.js. Node.js 20+ is only needed to regenerate
+parity fixtures or to run the benchmarks that compare against
 `stealth-reader-v0`.
 
-### Instalar a partir do código-fonte
+### Installing from Source
 
 ```bash
 git clone https://github.com/fe-m-bueno/cli-stealth-reader-v2.git stealth-reader
@@ -61,58 +61,58 @@ cargo install --path crates/stealth-reader --locked
 stealth-reader --version
 ```
 
-`cargo install` compila e instala o binário `stealth-reader` em `~/.cargo/bin`.
-Depois disso, a execução normal não usa Cargo:
+`cargo install` builds and installs the `stealth-reader` binary into
+`~/.cargo/bin`. After that, normal use does not involve Cargo:
 
 ```bash
 stealth-reader
 stealth-reader --resume
-stealth-reader ./livros/dune.epub
+stealth-reader ./books/dune.epub
 ```
 
-Se `~/.cargo/bin` ainda não estiver no `PATH`, adicione-o ao shell antes de
-abrir um terminal novo.
+If `~/.cargo/bin` is not on your `PATH` yet, add it to your shell before opening
+a new terminal.
 
-### Instalar o binário da release
+### Installing the Release Binary
 
-Depois que uma release for publicada, a instalação recomendada baixa o
-binário pronto para sua plataforma, valida o checksum e não requer Rust:
+Once a release has been published, the recommended installation downloads the
+prebuilt binary for your platform, validates the checksum, and requires no Rust:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fe-m-bueno/cli-stealth-reader-v2/main/install.sh | bash
 ```
 
-Por padrão, o binário fica em `~/.local/bin`. Para escolher outro diretório:
+By default the binary lands in `~/.local/bin`. To choose another directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fe-m-bueno/cli-stealth-reader-v2/main/install.sh \
   | STEALTH_READER_INSTALL_DIR="$HOME/bin" bash
 ```
 
-### Publicar uma release
+### Publishing a Release
 
-Ao criar e enviar uma tag no formato `v*`, o GitHub Actions compila e publica
-artefatos para Linux x86_64, macOS Intel e macOS Apple Silicon:
+When you create and push a tag matching `v*`, GitHub Actions builds and
+publishes artifacts for Linux x86_64, macOS Intel, and macOS Apple Silicon:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Cada release inclui um `.tar.gz` por plataforma e seu arquivo `.sha256`.
+Each release includes one `.tar.gz` per platform and its `.sha256` file.
 
-## Uso rápido
+## Quick Start
 
 ```bash
-stealth-reader                         # abre a biblioteca
-stealth-reader --resume                 # retoma o livro aberto mais recentemente
-stealth-reader ./livros/dune.epub      # importa e abre um arquivo
-stealth-reader ./quadrinhos/comic.cbz
-stealth-reader ./artigo.pdf
-stealth-reader update                   # atualiza para a última release
+stealth-reader                         # opens the library
+stealth-reader --resume                # resumes the most recently opened book
+stealth-reader ./books/dune.epub       # imports and opens a file
+stealth-reader ./comics/comic.cbz
+stealth-reader ./article.pdf
+stealth-reader update                  # updates to the latest release
 ```
 
-Também estão disponíveis as opções globais do binário:
+The binary's global options are also available:
 
 ```text
 stealth-reader --help
@@ -121,189 +121,188 @@ stealth-reader --resume
 stealth-reader [--resume] <FILE>
 ```
 
-Se um arquivo for informado junto com `--resume`, o arquivo explícito tem
-precedência.
+If a file is given alongside `--resume`, the explicit file takes precedence.
 
-O comando stealth-reader update (ou stealth-reader upgrade) baixa o artefato da
-última release, verifica o SHA-256 e substitui o binário instalado.
+The `stealth-reader update` command (or `stealth-reader upgrade`) downloads the
+latest release artifact, verifies the SHA-256, and replaces the installed
+binary.
 
-### O que acontece ao iniciar
+### What Happens on Startup
 
-Sem argumentos, o leitor **nunca reabre um livro sozinho** — ele oferece uma
-escolha. Na ordem:
+With no arguments, the reader **never reopens a book on its own** — it offers a
+choice. In order:
 
-1. um arquivo passado na linha de comando é importado e aberto;
-2. com `--resume`, o livro mais recente reabre na posição salva;
-3. caso contrário, o diretório configurado em `/librarydir` é varrido
-   recursivamente e:
-   - se a biblioteca já tem livros, o picker da biblioteca abre para você
-     escolher;
-   - se ela está vazia mas há EPUB/CBZ/PDF no diretório, o file picker abre com
-     os arquivos encontrados;
-   - se não há nada, o rodapé explica como apontar para outro diretório.
+1. a file passed on the command line is imported and opened;
+2. with `--resume`, the most recent book reopens at its saved position;
+3. otherwise, the directory configured via `/librarydir` is scanned
+   recursively, and:
+   - if the library already has books, the library picker opens so you can
+     choose;
+   - if it is empty but there are EPUB/CBZ/PDF files in the directory, the file
+     picker opens with the files it found;
+   - if there is nothing, the footer explains how to point at another directory.
 
-Abrir automaticamente o último livro é comportamento **opt-in** via `--resume`,
-e não o padrão: uma sessão que começa no lugar errado custa mais do que uma
-tecla a mais.
+Automatically opening the last book is **opt-in** via `--resume` rather than the
+default: a session that starts in the wrong place costs more than one extra
+keystroke.
 
-### Primeira sessão
+### First Session
 
-1. Inicie `stealth-reader`.
-2. Pressione `/` e execute `/librarydir ~/Books` para escolher a raiz da sua
-   biblioteca, ou use `/add /caminho/para/livro.epub` para importar um arquivo
-   diretamente.
-3. Sem caminho, `/add` abre um picker recursivo a partir da raiz configurada.
-4. Use `j`/`k`, as setas, `Space`/`b` ou a roda do mouse para navegar.
-5. Pressione `m` para alternar entre plain, TypeScript, Python e Rust.
-6. Pressione `f` para ativar o modo foco.
-7. Pressione `?` para consultar os atalhos.
-8. Pressione `q` para sair. A posição é salva automaticamente.
+1. Start `stealth-reader`.
+2. Press `/` and run `/librarydir ~/Books` to choose your library root, or use
+   `/add /path/to/book.epub` to import a file directly.
+3. With no path, `/add` opens a recursive picker starting from the configured
+   root.
+4. Use `j`/`k`, the arrow keys, `Space`/`b`, or the mouse wheel to navigate.
+5. Press `m` to switch between plain, TypeScript, Python, and Rust.
+6. Press `f` to enable focus mode.
+7. Press `?` to look up the shortcuts.
+8. Press `q` to quit. Your position is saved automatically.
 
-O comando `/help` abre o manual completo dentro do leitor. `/help <comando>`
-mostra a referência de um comando específico.
+The `/help` command opens the full manual inside the reader. `/help <command>`
+shows the reference for a specific command.
 
-## Formatos suportados
+## Supported Formats
 
 ### EPUB
 
-O importador valida o container, lê o OPF e resolve a tabela de conteúdos nesta
-ordem:
+The importer validates the container, reads the OPF, and resolves the table of
+contents in this order:
 
 1. EPUB3 `nav.xhtml`;
 2. NCX;
-3. ordem do spine, quando não há navegação utilizável.
+3. spine order, when there is no usable navigation.
 
-Fragmentos de âncora, capítulos que compartilham arquivos, front matter e
-títulos marcados apenas como parágrafos são tratados durante a normalização.
-Problemas recuperáveis ficam registrados como diagnósticos sem impedir a
-abertura do restante do livro.
+Anchor fragments, chapters sharing files, front matter, and headings marked up
+only as paragraphs are all handled during normalization. Recoverable problems
+are recorded as diagnostics without preventing the rest of the book from
+opening.
 
 ### CBZ
 
-Cada imagem do arquivo CBZ vira uma página navegável. O leitor não faz OCR: as
-páginas são exibidas como placeholders de imagem e o livro recebe um diagnóstico
-avisando que não há texto disponível para os modos de leitura.
+Each image in the CBZ file becomes a navigable page. The reader does not do OCR:
+pages are displayed as image placeholders and the book gets a diagnostic warning
+that no text is available for the reading modes.
 
 ### PDF
 
-Cada página vira um capítulo. O importador extrai texto dos content streams e
-separa parágrafos por linhas em branco; ele não faz OCR. Páginas somente com
-imagem recebem um placeholder e um diagnóstico, em vez de desaparecerem.
+Each page becomes a chapter. The importer extracts text from the content streams
+and separates paragraphs on blank lines; it does not do OCR. Image-only pages
+get a placeholder and a diagnostic rather than disappearing.
 
-## Modos de leitura
+## Reading Modes
 
 ### Plain
 
-O modo plain prioriza legibilidade:
+Plain mode prioritizes readability:
 
 ```text
-CAPÍTULO 1 — ABAIXO PELA TOCA DO COELHO
+CHAPTER 1 — DOWN THE RABBIT-HOLE
 
-Uma vez que Alice começou a se entediar de ficar ao lado de sua irmã
-no banco, sem nada fazer.
+Alice was beginning to get very tired of sitting by her sister on the
+bank, and of having nothing to do.
 
-▏ O dia era muito quente e sonolento para ela. Alice começou a sentir
-▏ muito sono e preguiça.
+▏ The day was very hot and made her feel sleepy. Alice began to feel
+▏ very sleepy and stupid.
 
 · · · · · · ·
 ```
 
-Títulos recebem destaque, citações usam uma barra lateral, listas preservam a
-indentação e quebras de cena são visualmente separadas. O destaque de diálogos
-pode ser ligado ou desligado com `/highlight on` e `/highlight off`.
+Headings are emphasized, quotes use a sidebar, lists preserve their indentation,
+and scene breaks are visually separated. Dialogue highlighting can be turned on
+or off with `/highlight on` and `/highlight off`.
 
 ### Stealth
 
-O texto é reformatado como código de uma linguagem escolhida. A sequência da
-tecla `m` é:
+The text is reformatted as code in a chosen language. The `m` key's sequence is:
 
 ```text
 plain → typescript → python → rust → plain
 ```
 
-Use `/mode typescript`, `/mode python`, `/mode rust` ou `/mode plain` para
-selecionar diretamente. A escolha fica salva nas configurações.
+Use `/mode typescript`, `/mode python`, `/mode rust`, or `/mode plain` to select
+one directly. The choice is saved in the settings.
 
-A densidade controla quanto de estrutura sintética aparece no código:
-
-```text
-/density 1    # mais comentários e texto explicativo
-/density 3    # equilíbrio padrão
-/density 5    # mais código e menos comentários
-```
-
-`d` alterna rapidamente entre 1, 3 e 5 enquanto um modo stealth está ativo.
-
-## Atalhos de teclado
-
-Os atalhos dependem da tela atual. No modo de comando, as letras são inseridas
-no texto; em overlays, `j` e `k` movem a seleção.
-
-### Navegação
-
-| Tecla | Ação |
-| --- | --- |
-| `j` / `↑` | Rolar para cima |
-| `k` / `↓` | Rolar para baixo |
-| `Space` / `PgDn` | Avançar uma página |
-| `b` / `PgUp` | Voltar uma página |
-| `Home` | Ir ao início do capítulo |
-| `End` | Ir ao fim do capítulo |
-| `←` / `→` | Capítulo anterior / próximo |
-| `Shift+T` | Abrir a tabela de conteúdos |
-| `Shift+B` | Abrir bookmarks |
-| `[` / `]` | Voltar / avançar no histórico de navegação |
-| `wheel` | Rolar a página |
-| `g` | Ir ao topo |
-| `Shift+G` | Ir ao fim |
-
-### Comandos e overlays
-
-| Tecla | Ação |
-| --- | --- |
-| `/` | Focar a barra de comandos |
-| `Enter` | Executar comando ou confirmar item selecionado |
-| `Tab` | Completar comando ou alternar sugestões |
-| `Esc` | Fechar overlay, cancelar busca ou desfocar a barra |
-| `n` / `Shift+N` | Próximo / anterior resultado de busca |
-| `d` | Excluir bookmark ou nota selecionada |
-| `s` (biblioteca) | Alternar critério de ordenação |
-| `r` (biblioteca) | Inverter direção da ordenação |
-| `?` / `Ctrl+.` / `Ctrl+X` | Abrir atalhos |
-| `Ctrl+C` | Sair do leitor |
-
-### Visualização
-
-| Tecla | Ação |
-| --- | --- |
-| `m` | Alternar modo de renderização |
-| `f` | Alternar modo foco |
-| `c` | Abrir picker de color schemes |
-| `Shift+C` | Abrir picker de temas |
-| `Shift+S` | Abrir configurações |
-| `p` | Alternar a informação de progresso |
-| `q` | Sair do leitor ou fechar um overlay |
-
-No painel de atalhos, `z` recolhe ou expande todos os grupos. No painel de
-configurações, `←`/`h` e `→`/`l` trocam de aba e `Space` altera o campo atual.
-
-## Slash commands
-
-Pressione `/` para abrir a barra. Comandos podem ser digitados com ou sem a
-barra inicial depois que a barra está ativa; argumentos com espaços devem usar
-aspas simples ou duplas. `Tab` completa nomes e flags.
-
-### Navegação
+Density controls how much synthetic structure appears in the code:
 
 ```text
-/prev [count]                         capítulo anterior
-/next [count]                         próximo capítulo
-/chapters [query] [--current] [--flat] tabela de conteúdos
-/goto <n|%> [--chapter]               posição por capítulo ou porcentagem
-/search [-g|--global] <term>         busca no capítulo ou no livro inteiro
+/density 1    # more comments and explanatory text
+/density 3    # the default balance
+/density 5    # more code and fewer comments
 ```
 
-Exemplos:
+`d` cycles quickly between 1, 3, and 5 while a stealth mode is active.
+
+## Keyboard Shortcuts
+
+The shortcuts depend on the current screen. In command mode, letters are typed
+into the text; in overlays, `j` and `k` move the selection.
+
+### Navigation
+
+| Key | Action |
+| --- | --- |
+| `j` / `↑` | Scroll up |
+| `k` / `↓` | Scroll down |
+| `Space` / `PgDn` | Page forward |
+| `b` / `PgUp` | Page back |
+| `Home` | Go to the start of the chapter |
+| `End` | Go to the end of the chapter |
+| `←` / `→` | Previous / next chapter |
+| `Shift+T` | Open the table of contents |
+| `Shift+B` | Open bookmarks |
+| `[` / `]` | Go back / forward in navigation history |
+| `wheel` | Scroll the page |
+| `g` | Go to the top |
+| `Shift+G` | Go to the end |
+
+### Commands and Overlays
+
+| Key | Action |
+| --- | --- |
+| `/` | Focus the command bar |
+| `Enter` | Run a command or confirm the selected item |
+| `Tab` | Complete a command or cycle suggestions |
+| `Esc` | Close an overlay, cancel a search, or unfocus the bar |
+| `n` / `Shift+N` | Next / previous search result |
+| `d` | Delete the selected bookmark or note |
+| `s` (library) | Change the sort criterion |
+| `r` (library) | Reverse the sort direction |
+| `?` / `Ctrl+.` / `Ctrl+X` | Open shortcuts |
+| `Ctrl+C` | Quit the reader |
+
+### View
+
+| Key | Action |
+| --- | --- |
+| `m` | Switch rendering mode |
+| `f` | Toggle focus mode |
+| `c` | Open the color scheme picker |
+| `Shift+C` | Open the theme picker |
+| `Shift+S` | Open settings |
+| `p` | Change the progress display |
+| `q` | Quit the reader or close an overlay |
+
+In the shortcuts panel, `z` collapses or expands every group. In the settings
+panel, `←`/`h` and `→`/`l` switch tabs and `Space` changes the current field.
+
+## Slash Commands
+
+Press `/` to open the bar. Commands can be typed with or without the leading
+slash once the bar is active; arguments containing spaces must use single or
+double quotes. `Tab` completes names and flags.
+
+### Navigation
+
+```text
+/prev [count]                          previous chapter
+/next [count]                          next chapter
+/chapters [query] [--current] [--flat] table of contents
+/goto <n|%> [--chapter]                position by chapter or percentage
+/search [-g|--global] <term>           search the chapter or the whole book
+```
+
+Examples:
 
 ```text
 /prev 2
@@ -316,11 +315,10 @@ Exemplos:
 /search -g mordor
 ```
 
-Por padrão, `/search` pesquisa apenas o capítulo atual. Use `-g` ou `--global`
-para pesquisar o livro inteiro e depois `n`/`Shift+N` para percorrer os
-resultados.
+By default, `/search` searches only the current chapter. Use `-g` or `--global`
+to search the whole book, then `n`/`Shift+N` to step through the results.
 
-### Biblioteca e livros
+### Library and Books
 
 ```text
 /changebook [query] [--recent] [--cwd] [--sort <key>]
@@ -333,16 +331,16 @@ resultados.
 /removecurrent [--confirm]
 ```
 
-`/book` é alias de `/changebook` e `/bookdir` é alias de `/librarydir`.
-`--sort` aceita `lastOpened`, `title`, `author` ou `progress`.
+`/book` is an alias for `/changebook` and `/bookdir` is an alias for
+`/librarydir`. `--sort` accepts `lastOpened`, `title`, `author`, or `progress`.
 
 ```text
 /changebook dune
 /changebook --recent
 /changebook --sort progress
 /resume --latest
-/add ./livros/exemplo.epub
-/add ./quadrinhos/comic.cbz --force
+/add ./books/example.epub
+/add ./comics/comic.cbz --force
 /add --cwd
 /librarydir ~/Books
 /librarydir --cwd
@@ -351,10 +349,10 @@ resultados.
 /removecurrent --confirm
 ```
 
-`/remove` remove apenas o livro da biblioteca local; nunca apaga o arquivo
-original no disco.
+`/remove` only removes the book from the local library; it never deletes the
+original file on disk.
 
-### Aparência e leitura
+### Appearance and Reading
 
 ```text
 /mode [plain|typescript|python|rust]
@@ -367,25 +365,25 @@ original no disco.
 /settings
 ```
 
-#### Mouse e seleção de texto
+#### Mouse and Text Selection
 
-A captura de mouse vem **desligada** por padrão, e é assim de propósito: com ela
-desligada o terminal continua dono do ponteiro, então arrastar o cursor sobre o
-texto seleciona e copia como em qualquer outra saída de terminal. Só a roda
-chega ao leitor, e ela rola a página normalmente.
+Mouse capture is **off** by default, and that is deliberate: with it off the
+terminal still owns the pointer, so dragging the cursor over the text selects
+and copies it the way it does for any other terminal output. Only the wheel
+reaches the reader, and it scrolls the page normally.
 
-Com `/mouse on` o leitor passa a receber cliques e arrastos:
+With `/mouse on`, the reader starts receiving clicks and drags:
 
-- clicar na trilha da barra de rolagem salta para o ponto correspondente do
-  capítulo, e arrastar o cursor da barra move a leitura continuamente;
-- clicar em uma linha de um overlay move a seleção para ela; nos grupos do painel
-  de atalhos, clicar no cabeçalho dobra ou desdobra o grupo;
-- clicar em `[×]` fecha o modal e clicar na linha de busca começa a filtrar.
+- clicking the scrollbar track jumps to the corresponding point in the chapter,
+  and dragging the bar's cursor moves the reading position continuously;
+- clicking a row in an overlay moves the selection to it; in the shortcut
+  panel's groups, clicking the header folds or unfolds the group;
+- clicking `[×]` closes the modal and clicking the search line starts filtering.
 
-Qualquer arrasto fora da barra de rolagem continua sendo do terminal. Nos
-terminais que reservam o arrasto simples para a aplicação (a maioria), a seleção
-nativa segue disponível com **Shift+arrasto** enquanto a captura está ligada;
-onde o terminal não oferece esse atalho, `/mouse off` devolve a seleção normal.
+Any drag outside the scrollbar still belongs to the terminal. On terminals that
+reserve a plain drag for the application (most of them), native selection
+remains available with **Shift+drag** while capture is on; where the terminal
+does not offer that shortcut, `/mouse off` gives normal selection back.
 
 Color schemes:
 
@@ -393,30 +391,30 @@ Color schemes:
 codex     claude     graphite     amber     forest
 ```
 
-Temas de aparência:
+Appearance themes:
 
 ```text
 dark     light     dark-colorblind     light-colorblind
 dark-ansi     light-ansi
 ```
 
-`/colorscheme` e `/theme` sem argumento abrem os respectivos pickers. A flag
-`--preview` de `/colorscheme` é aceita para compatibilidade; `--list` mostra a
-lista completa.
+`/colorscheme` and `/theme` with no argument open their respective pickers. The
+`--preview` flag on `/colorscheme` is accepted for compatibility; `--list` shows
+the full list.
 
-Progresso pode mostrar tempo estimado ou porcentagens. A ordem de ciclo da tecla
-`p` é:
+Progress can show an estimated time or percentages. The `p` key's cycle order
+is:
 
 ```text
 time-chapter → time-book → book → both → chapter → hidden
 ```
 
-`/settings` abre um painel com preview transacional e quatro abas: `Themes`,
-`Reading`, `Layout` e `More`. `Enter` salva; `Esc` cancela e restaura o estado
-anterior. As opções incluem escala de texto, margens, espaçamento, destaque de
-diálogos e captura do mouse.
+`/settings` opens a panel with a transactional preview and four tabs: `Themes`,
+`Reading`, `Layout`, and `More`. `Enter` saves; `Esc` cancels and restores the
+previous state. The options include text scale, margins, spacing, dialogue
+highlighting, and mouse capture.
 
-### Bookmarks, notas e tags
+### Bookmarks, Notes, and Tags
 
 ```text
 /mark [label]
@@ -432,37 +430,37 @@ diálogos e captura do mouse.
 /tags
 ```
 
-Exemplos:
+Examples:
 
 ```text
-/mark "voltar nesta passagem"
+/mark "come back to this passage"
 /marks
-/delmark "voltar nesta passagem"
-/note "verificar esta citação"
+/delmark "come back to this passage"
+/note "check this quote"
 /note -l
 /tag favorite
 /tag -d favorite
 /tags
 ```
 
-Bookmarks e notas podem ser selecionados nos overlays e abertos com `Enter`.
-Dentro deles, `d` remove o item selecionado.
+Bookmarks and notes can be selected in the overlays and opened with `Enter`.
+Inside them, `d` removes the selected item.
 
-### Exportação e importação
+### Export and Import
 
 ```text
 /export [path]
 /import [path]
 ```
 
-`/export` salva posições, bookmarks, notas e tags em JSON. Sem caminho, usa o
-arquivo padrão da aplicação. `/import` faz merge do arquivo exportado; a
-identidade dos livros usa o hash do conteúdo, não o caminho absoluto, tornando o
-arquivo adequado para sincronização entre máquinas.
+`/export` saves positions, bookmarks, notes, and tags as JSON. With no path, it
+uses the application's default file. `/import` merges the exported file; book
+identity uses the content hash rather than the absolute path, which makes the
+file suitable for syncing across machines.
 
 ### Toggl Track
 
-A integração é opcional e usa a API Focus do Toggl Track 2.0:
+The integration is optional and uses the Toggl Track 2.0 Focus API:
 
 ```text
 /toggl auth
@@ -470,18 +468,18 @@ A integração é opcional e usa a API Focus do Toggl Track 2.0:
 /toggl setup
 /toggl sync
 /toggl recent
-/toggl start "Livro" --project "Reading books"
+/toggl start "Book" --project "Reading books"
 /toggl stop
-/toggl log "Livro" --duration 45m --project "Reading books"
+/toggl log "Book" --duration 45m --project "Reading books"
 /toggl --disconnect
 /toggl auth --open
 ```
 
-Durações aceitam formatos como `25m`, `1.5h` e `900s`. O token fica no banco
-local de configurações; o histórico de comandos substitui credenciais por
+Durations accept formats like `25m`, `1.5h`, and `900s`. The token is stored in
+the local settings database; command history replaces credentials with
 `<redacted>`.
 
-### Ajuda
+### Help
 
 ```text
 /help
@@ -493,78 +491,77 @@ local de configurações; o histórico de comandos substitui credenciais por
 /keyboardshortcuts --category commands
 ```
 
-`/keys` é alias de `/keyboardshortcuts`. As categorias aceitas são
-`navigation`, `commands` e `view`.
+`/keys` is an alias for `/keyboardshortcuts`. The accepted categories are
+`navigation`, `commands`, and `view`.
 
-## Dados e compatibilidade com o v0
+## Data and v0 Compatibility
 
-O comando atual é `stealth-reader`, mas o nome do diretório de dados continua
-`cli-stealth-reader` de propósito. Esse é o contrato que permite ao v2 abrir o
-mesmo banco do [`stealth-reader-v0`](https://github.com/fe-m-bueno/cli-stealth-reader)
-sem copiar ou converter a biblioteca.
+The current command is `stealth-reader`, but the data directory is still named
+`cli-stealth-reader` on purpose. That is the contract that lets v2 open the same
+database as [`stealth-reader-v0`](https://github.com/fe-m-bueno/cli-stealth-reader)
+without copying or converting the library.
 
-| Dado | Caminho padrão |
+| Data | Default path |
 | --- | --- |
-| Banco SQLite | `~/.local/share/cli-stealth-reader/library.db` |
-| Cache de capítulos | `~/.cache/cli-stealth-reader/books/` |
+| SQLite database | `~/.local/share/cli-stealth-reader/library.db` |
+| Chapter cache | `~/.cache/cli-stealth-reader/books/` |
 
-Quando definidos, `XDG_DATA_HOME` e `XDG_CACHE_HOME` substituem os respectivos
-diretórios padrão:
+When set, `XDG_DATA_HOME` and `XDG_CACHE_HOME` override the respective default
+directories:
 
 ```text
 $XDG_DATA_HOME/cli-stealth-reader/library.db
 $XDG_CACHE_HOME/cli-stealth-reader/books/
 ```
 
-O cache é reconstruível. O banco contém configurações, livros, capítulos,
-posições, bookmarks, notas, tags, diagnósticos e histórico de comandos.
+The cache is rebuildable. The database holds settings, books, chapters,
+positions, bookmarks, notes, tags, diagnostics, and command history.
 
-### Usar a biblioteca existente
+### Using an Existing Library
 
-Se o checkout antigo foi renomeado para `~/Development/stealth-reader-v0`, o
-uso é direto:
+If the old checkout was renamed to `~/Development/stealth-reader-v0`, usage is
+straightforward:
 
 ```bash
 stealth-reader
 ```
 
-Para ter um backup antes da primeira execução:
+To take a backup before the first run:
 
 ```bash
 cp ~/.local/share/cli-stealth-reader/library.db ~/library.db.backup
 ```
 
-O v2 abre o banco no lugar e aplica somente alterações compatíveis e idempotentes
-(índices e a correção da chave composta de capítulos). O v0 continua capaz de
-abrir o banco. `/export` e `/import` são a forma recomendada de transportar o
-estado entre máquinas.
+v2 opens the database in place and applies only compatible, idempotent changes
+(indexes and the fix to the composite chapter key). v0 remains able to open the
+database. `/export` and `/import` are the recommended way to move state between
+machines.
 
-Não há necessidade de importar novamente todos os livros já presentes. Use
-`/add --force` apenas quando quiser reprocessar um arquivo ou quando o parser
-for atualizado.
+There is no need to re-import books that are already present. Use `/add --force`
+only when you want to reprocess a file or when the parser has been updated.
 
-## Arquitetura do código
+## Code Architecture
 
-O workspace é dividido por responsabilidade:
+The workspace is split by responsibility:
 
 ```text
 stealth-reader
-└── reader-tui             terminal, Ratatui, input e overlays
-    └── reader-app         estado, layout e execução dos comandos
-        ├── reader-core    domínio, renderização, temas, ritmo e parser de comandos
-        ├── reader-formats EPUB, CBZ, PDF, HTML, XML e descoberta de arquivos
-        ├── reader-storage SQLite, caminhos XDG, compatibilidade e export/import
-        └── reader-integrations  integração Toggl Track Focus
+└── reader-tui             terminal, Ratatui, input, and overlays
+    └── reader-app         state, layout, and command execution
+        ├── reader-core    domain, rendering, themes, pace, and command parser
+        ├── reader-formats EPUB, CBZ, PDF, HTML, XML, and file discovery
+        ├── reader-storage SQLite, XDG paths, compatibility, and export/import
+        └── reader-integrations  Toggl Track Focus integration
 ```
 
-O binário `stealth-reader` é apenas a composition root: lê argumentos, abre o
-storage, monta o estado inicial e inicia a TUI. `reader-core` não depende de
-terminal, banco, ZIP, PDF ou HTTP, o que mantém a lógica principal determinística
-e testável.
+The `stealth-reader` binary is only the composition root: it reads arguments,
+opens storage, assembles the initial state, and starts the TUI. `reader-core`
+does not depend on the terminal, database, ZIP, PDF, or HTTP, which keeps the
+core logic deterministic and testable.
 
-## Desenvolvimento
+## Development
 
-### Verificações locais
+### Local Checks
 
 ```bash
 cargo fmt --all --check
@@ -572,7 +569,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Durante o desenvolvimento, é possível testar apenas um crate:
+During development you can test a single crate:
 
 ```bash
 cargo test -p reader-core
@@ -588,7 +585,7 @@ cargo build --release -p reader-bench -p stealth-reader
 cargo run --release -p reader-bench -- --json
 ```
 
-Os benchmarks de comparação exigem um build do `stealth-reader-v0` e Node.js:
+The comparison benchmarks require a build of `stealth-reader-v0` and Node.js:
 
 ```bash
 cd ~/Development/stealth-reader-v0
@@ -600,15 +597,15 @@ V1_DIR=~/Development/stealth-reader-v0 node bench/v1-baseline.mjs --json
 cargo run --release -p reader-bench -- --json
 ```
 
-O nome `V1_DIR` é mantido pelos scripts de comparação por compatibilidade com o
-histórico da migração; o caminho apontado agora é o checkout `stealth-reader-v0`.
-Os resultados e o procedimento completo estão em
+The name `V1_DIR` is kept by the comparison scripts for compatibility with the
+migration's history; the path it points at is now the `stealth-reader-v0`
+checkout. The results and the full procedure are in
 [`docs/migration/performance-baseline.md`](docs/migration/performance-baseline.md).
 
-### Fixtures de paridade
+### Parity Fixtures
 
-As fixtures versionadas permitem executar a suíte Rust sem instalar Node.js.
-Para regenerá-las usando o v0:
+The versioned fixtures make it possible to run the Rust suite without installing
+Node.js. To regenerate them using v0:
 
 ```bash
 V1_DIR=~/Development/stealth-reader-v0 node tools/generate-render-golden.mjs
@@ -617,45 +614,45 @@ V1_DIR=~/Development/stealth-reader-v0 node tools/generate-import-golden.mjs
 V1_DIR=~/Development/stealth-reader-v0 node tools/generate-storage-fixture.mjs
 ```
 
-A regeneração é intencional e deve ser revisada junto com as mudanças. As
-principais coberturas são:
+Regeneration is deliberate and should be reviewed alongside the changes. The
+main coverage is:
 
-| Fixture | Cobertura |
+| Fixture | Coverage |
 | --- | --- |
-| `reader-core/tests/golden/render-parity.json` | renderização em modos, linguagens, densidades, larguras e espaçamentos |
-| `reader-core/tests/golden/command-parity.json` | parsing, erros, sugestões, ajuda e aliases |
-| `reader-formats/tests/golden/import-parity.json` | importação canônica de EPUBs e CBZs |
-| `reader-storage/tests/fixtures/v1-library.db` | leitura campo a campo de um banco do v0 |
+| `reader-core/tests/golden/render-parity.json` | rendering across modes, languages, densities, widths, and spacings |
+| `reader-core/tests/golden/command-parity.json` | parsing, errors, suggestions, help, and aliases |
+| `reader-formats/tests/golden/import-parity.json` | canonical import of EPUBs and CBZs |
+| `reader-storage/tests/fixtures/v1-library.db` | field-by-field reading of a v0 database |
 
-Mais detalhes estão em [`docs/migration/compatibility-contract.md`](docs/migration/compatibility-contract.md).
+More details are in [`docs/migration/compatibility-contract.md`](docs/migration/compatibility-contract.md).
 
-## Desempenho
+## Performance
 
-No corpus de referência, medido na mesma máquina, a implementação Rust reduziu
-substancialmente o custo do leitor:
+On the reference corpus, measured on the same machine, the Rust implementation
+substantially reduced the reader's cost:
 
-| Medição | v0 | `stealth-reader` |
+| Measurement | v0 | `stealth-reader` |
 | --- | ---: | ---: |
-| Inicialização | 339 ms | 0,9 ms |
-| Importação de EPUB de 266 mil palavras | 192 ms | 27 ms |
-| Renderização de capítulo em stealth | 5,0 ms | 1,8 ms |
-| Memória máxima | 157 MB | 15 MB |
+| Startup | 339 ms | 0.9 ms |
+| Importing a 266k-word EPUB | 192 ms | 27 ms |
+| Rendering a chapter in stealth mode | 5.0 ms | 1.8 ms |
+| Peak memory | 157 MB | 15 MB |
 
-Os números completos, corpus e limitações da comparação estão em
+The full numbers, corpus, and the comparison's limitations are in
 [`docs/migration/performance-baseline.md`](docs/migration/performance-baseline.md).
 
-## Documentação adicional
+## Further Documentation
 
-- [Arquitetura da migração](docs/migration/architecture.md)
-- [Contrato de compatibilidade](docs/migration/compatibility-contract.md)
-- [Dados, backup e rollback](docs/migration/data-migration.md)
-- [Melhorias deliberadas sobre o v0](docs/migration/improvements.md)
-- [Baseline de desempenho](docs/migration/performance-baseline.md)
-- [Como testar](docs/testing.md)
-- [Pesquisa de arquitetura](docs/research/codex-and-grok-build-architecture.md)
+- [Migration architecture](docs/migration/architecture.md)
+- [Compatibility contract](docs/migration/compatibility-contract.md)
+- [Data, backup, and rollback](docs/migration/data-migration.md)
+- [Deliberate improvements over v0](docs/migration/improvements.md)
+- [Performance baseline](docs/migration/performance-baseline.md)
+- [How to test](docs/testing.md)
+- [Architecture research](docs/research/codex-and-grok-build-architecture.md)
 
-## Contribuindo
+## Contributing
 
-Contribuições são bem-vindas. Preserve a separação entre domínio, adapters,
-storage e terminal; adicione testes para mudanças de comportamento e execute as
-verificações do workspace antes de abrir um pull request.
+Contributions are welcome. Preserve the separation between domain, adapters,
+storage, and terminal; add tests for behavior changes and run the workspace
+checks before opening a pull request.

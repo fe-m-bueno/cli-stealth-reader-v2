@@ -1,17 +1,17 @@
-# Navegação: Marcadores (/mark, /marks)
+# Navigation: Bookmarks (/mark, /marks)
 
-## Objetivo
+## Goal
 
-Salvar posições específicas dentro de capítulos e navegar para elas.
+Save specific positions within chapters and navigate to them.
 
-## Contexto
+## Context
 
-`src/storage.ts` — SQLite, tabelas existentes.
+`src/storage.ts` — SQLite, existing tables.
 `src/commands.ts`, `src/executor.ts`, `src/tui.ts`.
 
 ## Design
 
-### Tabela SQLite
+### SQLite Table
 
 ```sql
 CREATE TABLE IF NOT EXISTS bookmarks (
@@ -19,33 +19,33 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   book_id TEXT NOT NULL,
   chapter_index INTEGER NOT NULL,
   block_offset INTEGER NOT NULL,
-  label TEXT,           -- nome opcional do marcador
+  label TEXT,           -- optional bookmark name
   created_at INTEGER NOT NULL
 );
 ```
 
-### Comandos
+### Commands
 
-- `/mark` — cria marcador na posição atual (label auto: `Ch.3 §42`)
-- `/mark <label>` — cria com label personalizado
-- `/marks` — abre overlay listando marcadores do livro atual
-- `/delmark <id|label>` — remove marcador
+- `/mark` — creates a bookmark at the current position (auto label: `Ch.3 §42`)
+- `/mark <label>` — creates one with a custom label
+- `/marks` — opens an overlay listing the current book's bookmarks
+- `/delmark <id|label>` — removes a bookmark
 
-### Overlay de marcadores
+### Bookmarks Overlay
 
-Reutilizar o mecanismo de overlay existente (`state.overlay = "bookmarks"`).
-Lista: `> Ch.3 §42 — "label do marcador"  [há 2 dias]`
-Enter → navega para a posição.
-`d` sobre item → deleta.
+Reuse the existing overlay mechanism (`state.overlay = "bookmarks"`).
+List: `> Ch.3 §42 — "bookmark label"  [2 days ago]`
+Enter → navigates to the position.
+`d` on an item → deletes it.
 
-### Tecla rápida
+### Shortcut Key
 
-`B` (maiúsculo) → abre overlay de marcadores (como `T` abre capítulos).
-`m` já está ocupado (toggle mode), usar `B` de "bookmark".
+`B` (uppercase) → opens the bookmarks overlay (the way `T` opens chapters).
+`m` is already taken (toggle mode), so use `B` for "bookmark".
 
 ### Storage
 
-Adicionar métodos em `Storage`:
+Add methods to `Storage`:
 
 ```ts
 addBookmark(bookId, chapterIndex, blockOffset, label?): Bookmark
@@ -53,19 +53,18 @@ listBookmarks(bookId): Bookmark[]
 deleteBookmark(id): void
 ```
 
-## Arquivos a modificar
+## Files to Modify
 
-- `src/storage.ts`: nova tabela e métodos
+- `src/storage.ts`: new table and methods
 - `src/types.ts`: `Bookmark`, `OverlayKind` += `"bookmarks"`, `AppState`
 - `src/commands.ts`: `/mark`, `/marks`, `/delmark`
-- `src/executor.ts`: implementação
-- `src/tui.ts`: renderizar overlay de bookmarks
-- `src/input.ts`: tecla `B`
-- `src/help.ts`: atualizar KEYBOARD_SHORTCUTS
+- `src/executor.ts`: implementation
+- `src/tui.ts`: render the bookmarks overlay
+- `src/input.ts`: the `B` key
+- `src/help.ts`: update KEYBOARD_SHORTCUTS
 
-## Critérios de aceitação
+## Acceptance Criteria
 
-- Marcadores persistem entre sessões.
-- Navegar para marcador restaura capítulo e offset exatamente.
-- Overlay mostra label e data relativa.
-
+- Bookmarks persist across sessions.
+- Navigating to a bookmark restores the chapter and offset exactly.
+- The overlay shows the label and a relative date.

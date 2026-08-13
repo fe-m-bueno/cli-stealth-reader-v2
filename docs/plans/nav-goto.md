@@ -1,55 +1,55 @@
-# Navegação: Jump para Porcentagem (/goto)
+# Navigation: Jump to a Percentage (/goto)
 
-## Objetivo
+## Goal
 
-Pular para uma posição específica no livro ou capítulo usando porcentagem ou número de capítulo.
+Jump to a specific position in the book or chapter using a percentage or a chapter number.
 
-## Contexto
+## Context
 
 `src/commands.ts`, `src/executor.ts`.
 `src/screen.ts` — `computeBookProgress`, `computeChapterMaxOffset`.
 
 ## Design
 
-### Variantes do comando
+### Command Variants
 
-- `/goto 42%` — pula para 42% do livro (calcula capítulo + offset proporcional)
-- `/goto 42%c` ou `/goto 42% --chapter` — pula para 42% do capítulo atual
-- `/goto 5` — pula para o capítulo 5 (atalho para `/chapters` + Enter)
+- `/goto 42%` — jumps to 42% of the book (computes the chapter plus a proportional offset)
+- `/goto 42%c` or `/goto 42% --chapter` — jumps to 42% of the current chapter
+- `/goto 5` — jumps to chapter 5 (a shortcut for `/chapters` + Enter)
 
-### Lógica de cálculo
+### Calculation Logic
 
-**Porcentagem do livro:**
+**Book percentage:**
 
-1. Calcular total de palavras do livro: `sum(chapter.wordCount)`.
+1. Compute the book's total word count: `sum(chapter.wordCount)`.
 2. `targetWord = totalWords * 0.42`.
-3. Iterar capítulos acumulando wordCount até encontrar o capítulo que contém `targetWord`.
-4. Dentro do capítulo: `blockOffset = Math.floor((targetWord - accumulated) / chapterWordCount * chapterMaxOffset)`.
+3. Iterate over the chapters accumulating wordCount until you find the chapter containing `targetWord`.
+4. Within the chapter: `blockOffset = Math.floor((targetWord - accumulated) / chapterWordCount * chapterMaxOffset)`.
 
-**Porcentagem do capítulo:**
+**Chapter percentage:**
 
 1. `blockOffset = Math.floor(percentage * chapterMaxOffset)`.
 
-**Número de capítulo:**
+**Chapter number:**
 
-1. Validar range, setar `chapterIndex = n - 1`, `blockOffset = 0`.
+1. Validate the range, then set `chapterIndex = n - 1`, `blockOffset = 0`.
 
 ### Feedback
 
-Após o salto: `status = "Jumped to 42% (Ch.7 · §123)"`.
+After the jump: `status = "Jumped to 42% (Ch.7 · §123)"`.
 
-### Push no histórico de navegação
+### Pushing to Navigation History
 
-Chamar `pushNavHistory` antes do salto (integra com o plano de histórico).
+Call `pushNavHistory` before the jump (this integrates with the history plan).
 
-## Arquivos a modificar
+## Files to Modify
 
-- `src/commands.ts`: definição de `/goto` com arg `position`
-- `src/executor.ts`: implementar os três modos de goto
-- `src/input.ts`: não requer mudança de tecla (via command bar)
+- `src/commands.ts`: definition of `/goto` with a `position` argument
+- `src/executor.ts`: implement the three goto modes
+- `src/input.ts`: no key change required (it goes through the command bar)
 
-## Critérios de aceitação
+## Acceptance Criteria
 
-- `/goto 0%` → início do livro, `/goto 100%` → último bloco do último capítulo.
-- `/goto 3` em livro com 2 capítulos → status de erro amigável.
-- Funciona corretamente com livros de capítulos com wordCount = 0.
+- `/goto 0%` → the start of the book, `/goto 100%` → the last block of the last chapter.
+- `/goto 3` in a book with 2 chapters → a friendly error status.
+- Works correctly for books with chapters whose wordCount is 0.

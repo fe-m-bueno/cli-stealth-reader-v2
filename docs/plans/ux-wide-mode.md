@@ -1,25 +1,25 @@
-# UX: Modo Wide (Duas Colunas)
+# UX: Wide Mode (Two Columns)
 
-## Objetivo
-Em terminais com largura ≥ 120 colunas, exibir o texto em duas colunas lado a lado — simula layout de IDE com dois painéis de código abertos.
+## Goal
+On terminals at least 120 columns wide, display the text in two side-by-side columns — simulating an IDE layout with two code panes open.
 
-## Contexto
+## Context
 `src/tui.ts` — `draw`, `currentLines`.
 `src/screen.ts` — `getViewportLayout`, `renderBody`.
 `src/types.ts` — `AppState`.
 
 ## Design
 
-### Ativação
-- `/wide` ou tecla `W` (maiúsculo) → toggle `state.wideMode`.
-- Requer `process.stdout.columns >= 120`. Abaixo disso → status: `"Wide mode requires at least 120 columns"`.
+### Activation
+- `/wide` or the `W` key (uppercase) → toggles `state.wideMode`.
+- Requires `process.stdout.columns >= 120`. Below that → status: `"Wide mode requires at least 120 columns"`.
 
-### Layout de colunas
+### Column Layout
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ status bar (full width)                                 │
 ├──────────────────────┬──────────────────────────────────┤
-│ Coluna A             │ Coluna B                         │
+│ Column A             │ Column B                         │
 │ (blockOffset + 0..N) │ (blockOffset + bodyHeight..2N)   │
 │                      │                                  │
 ├──────────────────────┴──────────────────────────────────┤
@@ -27,41 +27,41 @@ Em terminais com largura ≥ 120 colunas, exibir o texto em duas colunas lado a 
 └─────────────────────────────────────────────────────────┘
 ```
 
-- `columnWidth = Math.floor((totalWidth - 3) / 2)` (3 = separador `│` + margens).
-- Coluna A: linhas `blockOffset..blockOffset + bodyHeight`.
-- Coluna B: linhas `blockOffset + bodyHeight..blockOffset + 2 * bodyHeight`.
-- Scroll avança `bodyHeight * 2` linhas de uma vez (pageSize dobra).
-- Scrollbar: baseado no total de linhas com `effectivePageSize = bodyHeight * 2`.
+- `columnWidth = Math.floor((totalWidth - 3) / 2)` (3 = the `│` separator plus margins).
+- Column A: lines `blockOffset..blockOffset + bodyHeight`.
+- Column B: lines `blockOffset + bodyHeight..blockOffset + 2 * bodyHeight`.
+- Scrolling advances `bodyHeight * 2` lines at a time (the page size doubles).
+- Scrollbar: based on the total line count with `effectivePageSize = bodyHeight * 2`.
 
-### Separador entre colunas
-Uma coluna de caracteres `│` em `theme.border` separando as duas colunas.
+### Column Separator
+A column of `│` characters in `theme.border` separating the two columns.
 
-### Renderização
-Em `draw()`:
+### Rendering
+In `draw()`:
 ```ts
 if (state.wideMode && width >= 120) {
-  // renderizar duas colunas
+  // render two columns
 } else {
-  // renderizar coluna única (atual)
+  // render a single column (current behavior)
 }
 ```
 
-### Overlay em wide mode
-Overlays (chapters, books, themes) continuam usando layout atual (full width ou lateral direito) — não divididos em colunas.
+### Overlays in Wide Mode
+Overlays (chapters, books, themes) keep the current layout (full width or right side) — they are not split into columns.
 
-### Modo foco em wide mode
-Incompatível — se `focusMode` ativo, ignorar `wideMode`.
+### Focus Mode in Wide Mode
+Incompatible — if `focusMode` is active, ignore `wideMode`.
 
-## Arquivos a modificar
-- `src/types.ts`: campo `wideMode: boolean` em `AppState`
-- `src/tui.ts`: branch de renderização em `draw`
-- `src/screen.ts`: `getViewportLayout` retornar `wideMode` layout quando ativo
-- `src/input.ts`: tecla `W`
+## Files to Modify
+- `src/types.ts`: `wideMode: boolean` field on `AppState`
+- `src/tui.ts`: rendering branch in `draw`
+- `src/screen.ts`: `getViewportLayout` returns the `wideMode` layout when active
+- `src/input.ts`: the `W` key
 - `src/commands.ts`: `/wide`
-- `src/help.ts`: documentar `W`
+- `src/help.ts`: document `W`
 
-## Critérios de aceitação
-- Duas colunas exibem conteúdo contíguo do livro (não duplicado).
-- Scroll avança corretamente (saltando o dobro das linhas).
-- Desabilitado automaticamente em terminais estreitos com aviso.
-- Não quebra overlays.
+## Acceptance Criteria
+- The two columns show contiguous book content (not duplicated).
+- Scrolling advances correctly (skipping twice as many lines).
+- Automatically disabled on narrow terminals, with a warning.
+- Overlays are not broken.

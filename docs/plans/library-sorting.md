@@ -1,61 +1,61 @@
-# Biblioteca: Ordenação da Lista de Livros
+# Library: Sorting the Book List
 
-## Objetivo
-Permitir ordenar o overlay de livros por diferentes critérios: progresso, título, autor, data de abertura.
+## Goal
+Allow the book overlay to be sorted by different criteria: progress, title, author, date opened.
 
-## Contexto
+## Context
 `src/storage.ts` — `listBooksWithProgress()`.
-`src/tui.ts` — overlay `"books"`.
-`src/input.ts` — teclas dentro do overlay.
+`src/tui.ts` — the `"books"` overlay.
+`src/input.ts` — keys inside the overlay.
 
 ## Design
 
-### Critérios de ordenação
+### Sort Criteria
 ```ts
 export type LibrarySortKey = "lastOpened" | "title" | "author" | "progress";
 export type SortDirection = "asc" | "desc";
 ```
 
-Default: `lastOpened desc` (comportamento atual).
+Default: `lastOpened desc` (the current behavior).
 
-### Estado
+### State
 ```ts
 // AppState
 librarySortKey: LibrarySortKey;
 librarySortDir: SortDirection;
 ```
 
-### Implementação
-`listBooksWithProgress()` já retorna os dados necessários.
-Adicionar `listBooksWithProgress(sort: LibrarySortKey, dir: SortDirection)` que aplica `ORDER BY` no SQLite (ou sort em memória para `progress`, que é calculado).
+### Implementation
+`listBooksWithProgress()` already returns the data needed.
+Add `listBooksWithProgress(sort: LibrarySortKey, dir: SortDirection)`, which applies `ORDER BY` in SQLite (or sorts in memory for `progress`, which is computed).
 
 ```sql
--- Para title/author/lastOpened: ORDER BY na query
--- Para progress: sort em memória após query
+-- For title/author/lastOpened: ORDER BY in the query
+-- For progress: sort in memory after the query
 ```
 
-### Teclas dentro do overlay de books
-Quando `state.overlay === "books"`:
-- `s` → cicla pelo critério de sort: `lastOpened → title → author → progress → lastOpened`
-- `r` → inverte direção (asc/desc)
+### Keys Inside the Books Overlay
+When `state.overlay === "books"`:
+- `s` → cycles through the sort criterion: `lastOpened → title → author → progress → lastOpened`
+- `r` → reverses the direction (asc/desc)
 
-### Header no overlay
-Primeira linha do overlay de books exibe o critério atual:
+### Overlay Header
+The first line of the books overlay shows the current criterion:
 ```
   Sort: Last Opened ↓   (Press s to change, r to reverse)
 ```
 
-### Comando
-`/books --sort title` — abre overlay já com sort por título.
+### Command
+`/books --sort title` — opens the overlay already sorted by title.
 
-## Arquivos a modificar
-- `src/storage.ts`: parâmetro de sort em `listBooksWithProgress`
-- `src/types.ts`: `LibrarySortKey`, `SortDirection`, campos em `AppState`
-- `src/tui.ts`: inicializar sort, passar para `renderOverlay`, exibir header
-- `src/input.ts`: teclas `s` e `r` dentro do overlay books
-- `src/commands.ts`: flag `--sort` em `/books`
+## Files to Modify
+- `src/storage.ts`: sort parameter on `listBooksWithProgress`
+- `src/types.ts`: `LibrarySortKey`, `SortDirection`, fields on `AppState`
+- `src/tui.ts`: initialize the sort, pass it to `renderOverlay`, show the header
+- `src/input.ts`: `s` and `r` keys inside the books overlay
+- `src/commands.ts`: `--sort` flag on `/books`
 
-## Critérios de aceitação
-- Sort por título é alfabético (case-insensitive).
-- Sort por progresso ordena livros não iniciados por último.
-- Direção persiste enquanto o overlay está aberto, reseta ao fechar.
+## Acceptance Criteria
+- Sorting by title is alphabetical (case-insensitive).
+- Sorting by progress puts unstarted books last.
+- The direction persists while the overlay is open and resets when it closes.
