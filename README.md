@@ -1,5 +1,8 @@
 # stealth-reader
 
+**A Node.js-to-Rust rewrite under a compatibility contract: same database, same
+library, startup from 339 ms down to 0.9 ms.**
+
 A full-screen book reader for the terminal, written in Rust. `stealth-reader`
 opens EPUB, CBZ, and PDF files and offers two reading styles:
 
@@ -14,6 +17,40 @@ It keeps the v0 database format: positions, bookmarks, notes, tags, and settings
 remain available without a manual migration.
 
 ![Stealth mode in TypeScript](docs/screenshots/stealth-code-mode.png)
+
+## Performance
+
+On the reference corpus, measured on the same machine, the Rust implementation
+substantially reduced the reader's cost:
+
+| Measurement | v0 | `stealth-reader` |
+| --- | ---: | ---: |
+| Startup | 339 ms | 0.9 ms |
+| Importing a 266k-word EPUB | 192 ms | 27 ms |
+| Rendering a chapter in stealth mode | 5.0 ms | 1.8 ms |
+| Peak memory | 157 MB | 15 MB |
+
+The full numbers, corpus, and the comparison's limitations are in
+[`docs/migration/performance-baseline.md`](docs/migration/performance-baseline.md).
+
+## Code Architecture
+
+The workspace is split by responsibility:
+
+```text
+stealth-reader
+└── reader-tui             terminal, Ratatui, input, and overlays
+    └── reader-app         state, layout, and command execution
+        ├── reader-core    domain, rendering, themes, pace, and command parser
+        ├── reader-formats EPUB, CBZ, PDF, HTML, XML, and file discovery
+        ├── reader-storage SQLite, XDG paths, compatibility, and export/import
+        └── reader-integrations  Toggl Track Focus integration
+```
+
+The `stealth-reader` binary is only the composition root: it reads arguments,
+opens storage, assembles the initial state, and starts the TUI. `reader-core`
+does not depend on the terminal, database, ZIP, PDF, or HTTP, which keeps the
+core logic deterministic and testable.
 
 ## Features
 
@@ -540,25 +577,6 @@ machines.
 There is no need to re-import books that are already present. Use `/add --force`
 only when you want to reprocess a file or when the parser has been updated.
 
-## Code Architecture
-
-The workspace is split by responsibility:
-
-```text
-stealth-reader
-└── reader-tui             terminal, Ratatui, input, and overlays
-    └── reader-app         state, layout, and command execution
-        ├── reader-core    domain, rendering, themes, pace, and command parser
-        ├── reader-formats EPUB, CBZ, PDF, HTML, XML, and file discovery
-        ├── reader-storage SQLite, XDG paths, compatibility, and export/import
-        └── reader-integrations  Toggl Track Focus integration
-```
-
-The `stealth-reader` binary is only the composition root: it reads arguments,
-opens storage, assembles the initial state, and starts the TUI. `reader-core`
-does not depend on the terminal, database, ZIP, PDF, or HTTP, which keeps the
-core logic deterministic and testable.
-
 ## Development
 
 ### Local Checks
@@ -625,21 +643,6 @@ main coverage is:
 | `reader-storage/tests/fixtures/v1-library.db` | field-by-field reading of a v0 database |
 
 More details are in [`docs/migration/compatibility-contract.md`](docs/migration/compatibility-contract.md).
-
-## Performance
-
-On the reference corpus, measured on the same machine, the Rust implementation
-substantially reduced the reader's cost:
-
-| Measurement | v0 | `stealth-reader` |
-| --- | ---: | ---: |
-| Startup | 339 ms | 0.9 ms |
-| Importing a 266k-word EPUB | 192 ms | 27 ms |
-| Rendering a chapter in stealth mode | 5.0 ms | 1.8 ms |
-| Peak memory | 157 MB | 15 MB |
-
-The full numbers, corpus, and the comparison's limitations are in
-[`docs/migration/performance-baseline.md`](docs/migration/performance-baseline.md).
 
 ## Further Documentation
 
