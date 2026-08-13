@@ -1,56 +1,56 @@
-# Leitura: Modo Foco
+# Reading: Focus Mode
 
-## Objetivo
-Exibir apenas um parágrafo por vez, centralizado na tela, eliminando toda distração.
-No modo code, parece que o usuário está debugando/lendo uma função isolada.
+## Goal
+Show only one paragraph at a time, centered on the screen, removing every distraction.
+In code mode, it looks as if the user is debugging or reading a single isolated function.
 
-## Contexto
+## Context
 `src/tui.ts` — `currentLines`, `draw`.
 `src/types.ts` — `AppState`.
-`src/input.ts` — navegação.
+`src/input.ts` — navigation.
 
 ## Design
 
-### Estado
+### State
 ```ts
 // types.ts — AppState
 focusMode: boolean;
-focusBlockIndex: number; // índice do bloco atual no capítulo
+focusBlockIndex: number; // index of the current block within the chapter
 ```
 
-### Rendering em modo foco
-Substituir `currentLines` quando `focusMode === true`:
-1. Pegar `chapter.blocks[state.focusBlockIndex]`.
-2. Renderizar com `renderBlocks([block], mode, width, theme)`.
-3. Centralizar verticalmente: padding superior = `Math.floor((bodyHeight - lines.length) / 2)`.
-4. Opcionalmente exibir número do bloco/total no footer: `§ 42 / 318`.
+### Rendering in Focus Mode
+Replace `currentLines` when `focusMode === true`:
+1. Take `chapter.blocks[state.focusBlockIndex]`.
+2. Render it with `renderBlocks([block], mode, width, theme)`.
+3. Center it vertically: top padding = `Math.floor((bodyHeight - lines.length) / 2)`.
+4. Optionally show the block number and total in the footer: `§ 42 / 318`.
 
-### Navegação em modo foco
-- `k` / `Space` → próximo bloco (`focusBlockIndex++`), ao fim do capítulo → próximo capítulo.
-- `j` → bloco anterior.
-- Ao atingir o fim do bloco e pressionar k novamente → exibir transição de capítulo (mesmo mecanismo atual).
-- `g` / `G` → primeiro/último bloco do capítulo.
-- `Esc` ou `f` → sair do modo foco.
+### Navigation in Focus Mode
+- `k` / `Space` → next block (`focusBlockIndex++`); at the end of the chapter → next chapter.
+- `j` → previous block.
+- Reaching the end of the block and pressing k again → show the chapter transition (the same mechanism as today).
+- `g` / `G` → first/last block of the chapter.
+- `Esc` or `f` → leave focus mode.
 
-### Ativação
-- Tecla `f` → toggle `state.focusMode`.
-- Ao entrar no modo foco, `focusBlockIndex` é calculado a partir do `blockOffset` atual (mapear offset para o índice de bloco visível mais próximo).
+### Activation
+- The `f` key → toggles `state.focusMode`.
+- On entering focus mode, `focusBlockIndex` is computed from the current `blockOffset` (mapping the offset to the nearest visible block index).
 
-### Status bar
-Indicar `[FOCUS]` ao lado do renderMode.
+### Status Bar
+Show `[FOCUS]` next to the renderMode.
 
-### Sem scrollbar em modo foco
-`renderScrollbar` retorna `[]` quando `focusMode === true`.
+### No Scrollbar in Focus Mode
+`renderScrollbar` returns `[]` when `focusMode === true`.
 
-## Arquivos a modificar
-- `src/types.ts`: campos em `AppState`
-- `src/tui.ts`: `currentLines` e `draw` com branch para modo foco
-- `src/input.ts`: tecla `f`, navegação por bloco
-- `src/screen.ts`: `renderStatusBar` ou `renderFooter` para indicar `[FOCUS]`
-- `src/help.ts`: documentar `f`
+## Files to Modify
+- `src/types.ts`: fields on `AppState`
+- `src/tui.ts`: `currentLines` and `draw` with a branch for focus mode
+- `src/input.ts`: the `f` key, block-by-block navigation
+- `src/screen.ts`: `renderStatusBar` or `renderFooter` to show `[FOCUS]`
+- `src/help.ts`: document `f`
 
-## Critérios de aceitação
-- Modo foco exibe exatamente um bloco centralizado.
-- `k`/`j` avança/retrocede por bloco, não por linha.
-- Toggle `f` retorna à posição equivalente no modo normal (bloco visível → blockOffset).
-- Funciona em ambos plain e code mode.
+## Acceptance Criteria
+- Focus mode shows exactly one centered block.
+- `k`/`j` move forward/back by block, not by line.
+- Toggling `f` returns to the equivalent position in normal mode (visible block → blockOffset).
+- Works in both plain and code mode.

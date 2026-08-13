@@ -1,37 +1,36 @@
-# UX: Ajuste de Text Overhead para Fontes Grandes (/fontsize)
+# UX: Text Overhead Adjustment for Large Fonts (/fontsize)
 
-## Objetivo
-Permitir que o usuário informe o fator de escala da fonte do terminal (ex: fonte grande = caracteres mais largos visualmente),
-ajustando o `TEXT_OVERHEAD` dinamicamente para evitar overflow em fontes maiores.
+## Goal
+Let the user declare their terminal's font scale factor (for example, a large font means visually wider characters), adjusting `TEXT_OVERHEAD` dynamically to avoid overflow at larger font sizes.
 
-## Contexto
-`src/renderers.ts` — constante `TEXT_OVERHEAD = 42`.
-`src/screen.ts` — `getViewportLayout` usa `process.stdout.columns`.
+## Context
+`src/renderers.ts` — the `TEXT_OVERHEAD = 42` constant.
+`src/screen.ts` — `getViewportLayout` uses `process.stdout.columns`.
 
-## Problema
-`TEXT_OVERHEAD` é fixo em 42. Se o usuário usa fonte grande e o terminal reporta 80 colunas mas linhas parecem mais estreitas visualmente, o texto pode parecer quebrado num ponto estranho. O oposto também: fonte monoespaçada estreita em 200 colunas → linhas muito longas.
+## Problem
+`TEXT_OVERHEAD` is fixed at 42. If the user has a large font and the terminal reports 80 columns but the lines look visually narrower, the text may appear to break at an odd point. The opposite is also true: a narrow monospaced font at 200 columns → lines that are far too long.
 
 ## Design
 
-### Comando
-`/fontsize <scale>` onde scale é `1.0` (default), `1.5`, `2.0`, `0.75` etc.
-Aceitar também valores inteiros: `/fontsize 2` = scale 2.0.
+### Command
+`/fontsize <scale>`, where scale is `1.0` (default), `1.5`, `2.0`, `0.75`, and so on.
+Also accept integer values: `/fontsize 2` = scale 2.0.
 
-### O que ajusta
-Não é possível controlar a fonte do terminal via escape codes.
-O que o app pode controlar:
-1. **`textWidth`** em `renderCode`: `Math.max(width / scale - TEXT_OVERHEAD, 20)` — reduz largura efetiva para fontes maiores.
-2. **Margem implícita** — com scale > 1, aplicar `Math.floor((scale - 1) * 10)` colunas de margem automática.
-3. **Wrap em plain mode** — `wrapText(text, width / scale)` para quebrar mais cedo.
+### What It Adjusts
+The terminal's font cannot be controlled through escape codes.
+What the app can control:
+1. **`textWidth`** in `renderCode`: `Math.max(width / scale - TEXT_OVERHEAD, 20)` — reduces the effective width for larger fonts.
+2. **Implicit margin** — with scale > 1, apply `Math.floor((scale - 1) * 10)` columns of automatic margin.
+3. **Wrapping in plain mode** — `wrapText(text, width / scale)` to break earlier.
 
-### Estado
+### State
 ```ts
 // AppSettings / AppState
 fontScale: number; // default 1.0
 ```
 
-### Implementação
-Passar `fontScale` para `renderBlocks` e `getViewportLayout`:
+### Implementation
+Pass `fontScale` to `renderBlocks` and `getViewportLayout`:
 ```ts
 // renderers.ts
 const textWidth = Math.max(Math.floor(width / state.fontScale) - TEXT_OVERHEAD, 20);
@@ -43,24 +42,24 @@ const effectiveColumns = Math.floor(columns / fontScale);
 ### Feedback
 `/fontsize 1.5` → `"Font scale set to 1.5x (effective width: 80 → 53 columns)"`.
 
-### Persistência
+### Persistence
 `storage.setSetting("fontScale", String(scale))`.
 
-### Teclas rápidas (opcional)
-`+` / `-` para incrementar/decrementar scale em 0.25.
-> Cuidado: `+` não está em uso atualmente — verificar colisão.
+### Shortcut Keys (optional)
+`+` / `-` to increase/decrease the scale by 0.25.
+> Careful: `+` is not currently in use — check for a collision.
 
-## Arquivos a modificar
-- `src/types.ts`: `fontScale` em `AppSettings` e `AppState`
-- `src/storage.ts`: ler/gravar `fontScale`
-- `src/renderers.ts`: usar `fontScale` no cálculo de `textWidth`
-- `src/screen.ts`: `getViewportLayout` recebe/usa `fontScale`
-- `src/tui.ts`: inicializar e passar `fontScale`
+## Files to Modify
+- `src/types.ts`: `fontScale` on `AppSettings` and `AppState`
+- `src/storage.ts`: read/write `fontScale`
+- `src/renderers.ts`: use `fontScale` when computing `textWidth`
+- `src/screen.ts`: `getViewportLayout` receives and uses `fontScale`
+- `src/tui.ts`: initialize and pass `fontScale`
 - `src/commands.ts`: `/fontsize`
-- `src/executor.ts`: implementação
+- `src/executor.ts`: implementation
 
-## Critérios de aceitação
-- `/fontsize 2` reduz efetivamente a largura do conteúdo à metade.
-- `/fontsize 1` restaura comportamento padrão.
-- Persiste entre sessões.
-- Funciona em conjunto com `/margin`.
+## Acceptance Criteria
+- `/fontsize 2` effectively halves the content width.
+- `/fontsize 1` restores the default behavior.
+- It persists across sessions.
+- It works together with `/margin`.

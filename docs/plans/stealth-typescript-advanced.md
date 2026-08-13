@@ -1,46 +1,46 @@
-# Stealth: TypeScript Avançado
+# Stealth: Advanced TypeScript
 
-## Objetivo
-Tornar o modo code mais convincente adicionando construções TypeScript reais além de simples assignments.
+## Goal
+Make code mode more convincing by adding real TypeScript constructs beyond simple assignments.
 
-## Contexto
-`src/renderers.ts` — funções `renderCode`, `disguiseLine`, `LINE_PATTERNS`.
-Atualmente há 12 padrões de linha (patConst, patLet, patComment, etc.) e 4 blocos estruturais (import, interface, function, async function).
+## Context
+`src/renderers.ts` — the `renderCode` and `disguiseLine` functions, and `LINE_PATTERNS`.
+Today there are 12 line patterns (patConst, patLet, patComment, and so on) and 4 structural blocks (import, interface, function, async function).
 
-## O que adicionar
+## What to Add
 
-### Novos padrões de linha
+### New Line Patterns
 - `patCast`: `const x = value as TypeName;`
 - `patGenericCall`: `const x = processItems<TypeName>(arg);`
 - `patDestructure`: `const { prop1, prop2 } = state;`
 - `patSpread`: `const next = { ...ctx, key: "value" };`
 - `patTernary`: `const x = cond ? "value" : fallback;`
 
-### Novos blocos estruturais
-- **Enum** (ex: `blockIndex % 17`):
+### New Structural Blocks
+- **Enum** (for example, `blockIndex % 17`):
   ```ts
   enum StateName { Active, Pending, Resolved }
   ```
-- **Decorator + class method** (ex: `blockIndex % 31`):
+- **Decorator + class method** (for example, `blockIndex % 31`):
   ```ts
   @Injectable()
   class ServiceName { … }
   ```
-- **Generic function** (ex: `blockIndex % 37`):
+- **Generic function** (for example, `blockIndex % 37`):
   ```ts
   function process<T extends TypeName>(item: T): Promise<T> { … }
   ```
-- **Conditional block** (`if/else`) com texto distribuído nos dois branches.
+- **Conditional block** (`if/else`) with the text distributed across both branches.
 
-### Nome de tipos genéricos
-Expandir `toTypeName` para sufixar `<T>`, `<T, K>`, `<T extends Base>` em ~30% dos usos.
+### Generic Type Names
+Extend `toTypeName` to append `<T>`, `<T, K>`, or `<T extends Base>` in roughly 30% of uses.
 
-## Arquivos a modificar
-- `src/renderers.ts`: adicionar novas funções `pat*` e blocos estruturais, incluir nos arrays `LINE_PATTERNS` e na lógica de seleção de estrutura.
+## Files to Modify
+- `src/renderers.ts`: add the new `pat*` functions and structural blocks, and include them in the `LINE_PATTERNS` array and in the structure selection logic.
 
-## Critérios de aceitação
-- Nenhuma linha ultrapassa `width` colunas (usar `TEXT_OVERHEAD` revisado se necessário).
-- Padrão é determinístico: mesmo `blockIndex` → mesmo output.
-- Não quebra plain mode.
+## Acceptance Criteria
+- No line exceeds `width` columns (use a revised `TEXT_OVERHEAD` if needed).
+- The pattern is deterministic: the same `blockIndex` → the same output.
+- Plain mode is not broken.
 
 # DONE

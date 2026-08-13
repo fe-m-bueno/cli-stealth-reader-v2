@@ -1,17 +1,17 @@
-# Navegação: Histórico de Posições ([ e ])
+# Navigation: Position History ([ and ])
 
-## Objetivo
+## Goal
 
-Navegar para frente e para trás no histórico de posições visitadas, como navegação de browser ou editor de código.
+Move backward and forward through the history of visited positions, the way a browser or code editor does.
 
-## Contexto
+## Context
 
 `src/types.ts` — `AppState`.
-`src/input.ts` — handlers de teclas.
+`src/input.ts` — key handlers.
 
 ## Design
 
-### Estado
+### State
 
 ```ts
 // types.ts
@@ -22,28 +22,28 @@ export interface NavHistoryEntry {
 
 // AppState:
 navHistory: NavHistoryEntry[];
-navHistoryCursor: number; // índice atual no histórico
+navHistoryCursor: number; // current index in the history
 ```
 
-### Regras
+### Rules
 
-- Toda mudança de posição "intencional" (mudança de capítulo, `/goto`, click em marcador, Enter em overlay) adiciona entrada ao histórico.
-- Scroll normal (j/k/Space) NÃO adiciona ao histórico (geraria spam).
-- Histórico limitado a 50 entradas (descartar a mais antiga ao adicionar além do limite).
-- Ao adicionar nova entrada enquanto `navHistoryCursor < navHistory.length - 1`, descartar entradas após o cursor (como browser).
+- Every "intentional" position change (changing chapter, `/goto`, clicking a bookmark, Enter in an overlay) adds an entry to the history.
+- Normal scrolling (j/k/Space) does NOT add to the history (it would create spam).
+- The history is capped at 50 entries (drop the oldest when adding beyond the limit).
+- When a new entry is added while `navHistoryCursor < navHistory.length - 1`, discard the entries after the cursor (like a browser).
 
-### Teclas
+### Keys
 
-- `[` → voltar no histórico (ir para `navHistory[cursor - 1]`)
-- `]` → avançar no histórico (ir para `navHistory[cursor + 1]`)
-- Quando no início/fim, exibir `status = "No history to go back"` / `"No history to go forward"`.
+- `[` → go back in the history (to `navHistory[cursor - 1]`)
+- `]` → go forward in the history (to `navHistory[cursor + 1]`)
+- At the start/end, show `status = "No history to go back"` / `"No history to go forward"`.
 
-### Função helper
+### Helper Function
 
 ```ts
 function pushNavHistory(state: AppState): void {
   const entry = { chapterIndex: state.chapterIndex, blockOffset: state.blockOffset };
-  // descartar forward history se cursor não está no fim
+  // discard forward history if the cursor is not at the end
   state.navHistory = state.navHistory.slice(0, state.navHistoryCursor + 1);
   state.navHistory.push(entry);
   if (state.navHistory.length > 50) state.navHistory.shift();
@@ -51,19 +51,18 @@ function pushNavHistory(state: AppState): void {
 }
 ```
 
-Chamar `pushNavHistory` antes de saltos em `executor.ts` (goto, chapter select, bookmark navigate).
+Call `pushNavHistory` before jumps in `executor.ts` (goto, chapter select, bookmark navigate).
 
-## Arquivos a modificar
+## Files to Modify
 
-- `src/types.ts`: `NavHistoryEntry`, campos em `AppState`
-- `src/input.ts`: teclas `[` e `]`
-- `src/executor.ts`: chamar `pushNavHistory` em saltos
-- `src/tui.ts`: inicializar `navHistory: [], navHistoryCursor: -1`
-- `src/help.ts`: documentar `[` e `]`
+- `src/types.ts`: `NavHistoryEntry`, fields on `AppState`
+- `src/input.ts`: the `[` and `]` keys
+- `src/executor.ts`: call `pushNavHistory` on jumps
+- `src/tui.ts`: initialize `navHistory: [], navHistoryCursor: -1`
+- `src/help.ts`: document `[` and `]`
 
-## Critérios de aceitação
+## Acceptance Criteria
 
-- `[` e `]` funcionam corretamente após mudanças de capítulo e goto.
-- Scroll normal não polui o histórico.
-- Histórico não persiste entre sessões (apenas em memória).
-
+- `[` and `]` work correctly after chapter changes and gotos.
+- Normal scrolling does not pollute the history.
+- The history does not persist across sessions (in memory only).

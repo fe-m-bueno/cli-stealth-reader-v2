@@ -1,62 +1,62 @@
-# Stealth: Indentação Aninhada e Linhas em Branco
+# Stealth: Nested Indentation and Blank Lines
 
-## Objetivo
-Fazer o output do modo code parecer um arquivo real, com funções aninhadas, blocos condicionais e linhas em branco estratégicas — não uma sequência uniforme de statements.
+## Goal
+Make code-mode output look like a real file, with nested functions, conditional blocks, and strategic blank lines — not a uniform sequence of statements.
 
-## Contexto
-`src/renderers.ts` — `renderCode`, blocos estruturais (import/interface/function/async).
-Atualmente todos os blocos têm profundidade 0 ou 1 de indentação.
+## Context
+`src/renderers.ts` — `renderCode`, structural blocks (import/interface/function/async).
+Today every block has an indentation depth of 0 or 1.
 
 ## Design
 
-### Linhas em branco entre blocos
-Em `renderBlocks`, ao invés de sempre emitir `""` entre blocos, variar:
-- 70% → uma linha em branco (atual)
-- 20% → nenhuma linha em branco (statements dentro de função)
-- 10% → duas linhas em branco (entre "funções")
+### Blank Lines Between Blocks
+In `renderBlocks`, instead of always emitting `""` between blocks, vary it:
+- 70% → one blank line (current behavior)
+- 20% → no blank line (statements inside a function)
+- 10% → two blank lines (between "functions")
 
-Usar `lineHash(index, 999) % 10` para decidir deterministicamente.
+Use `lineHash(index, 999) % 10` to decide deterministically.
 
-### Indentação variável dentro de blocos estruturais
-Quando um bloco estrutural abre função/if:
-- Primeiros N/2 wrapped lines recebem indent `  ` (dentro da função)
-- Última linha: `}` de fechamento
+### Variable Indentation Inside Structural Blocks
+When a structural block opens a function or if:
+- The first N/2 wrapped lines get a `  ` indent (inside the function)
+- The last line: the closing `}`
 
-Adicionar bloco condicional:
+Add a conditional block:
 ```ts
 // blockIndex % 41
 if (condName) {
-  // primeiras linhas com indent
+  // first lines with indent
 } else {
-  // últimas linhas com indent
+  // last lines with indent
 }
 ```
 
-### Blocos aninhados opcionais
-Quando bloco está dentro de função (`structLines.length > 0`), ~30% das linhas body recebem indent `    ` (duplo) para simular código dentro de if/for interno.
+### Optional Nested Blocks
+When a block is inside a function (`structLines.length > 0`), roughly 30% of the body lines get a `    ` (double) indent to simulate code inside an inner if/for.
 
-Usar `lineHash(blockIndex, lineIndex + 50) % 3 === 0` para decidir.
+Use `lineHash(blockIndex, lineIndex + 50) % 3 === 0` to decide.
 
-### Padrão "for loop" (novo bloco estrutural, `blockIndex % 43`)
+### "for loop" Pattern (new structural block, `blockIndex % 43`)
 ```ts
 for (const item of items) {
-  // linhas do bloco
+  // the block's lines
 }
 ```
 
-### Padrão "try/catch" (novo bloco estrutural, `blockIndex % 47`)
+### "try/catch" Pattern (new structural block, `blockIndex % 47`)
 ```ts
 try {
-  // primeiras linhas
+  // first lines
 } catch (err) {
-  // últimas linhas
+  // last lines
 }
 ```
 
-## Arquivos a modificar
-- `src/renderers.ts`: lógica de espaçamento em `renderBlocks`, novos blocos estruturais, indentação variável em `renderCode`
+## Files to Modify
+- `src/renderers.ts`: spacing logic in `renderBlocks`, new structural blocks, variable indentation in `renderCode`
 
-## Critérios de aceitação
-- Output parece um arquivo JS/TS real quando scrollado rapidamente.
-- Nenhuma linha excede `width` (indentação adicional desconta do `textWidth`).
-- Determinístico.
+## Acceptance Criteria
+- The output looks like a real JS/TS file when scrolled quickly.
+- No line exceeds `width` (the extra indentation is deducted from `textWidth`).
+- Deterministic.
